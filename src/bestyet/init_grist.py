@@ -2,7 +2,10 @@
 
 Run as ``python -m bestyet.init_grist`` (or ``bestyet-init``). It builds a plan by diffing
 ``schema.TABLES`` against the document, then applies only additions through the REST API:
-missing tables and missing plain columns. It never drops, renames, retypes or overwrites.
+missing tables and missing plain columns. It never drops, renames, retypes or overwrites; the
+one exception is Grist's own empty default table in a document this run created (see
+``remove_default_table``). The whole plan is printed first and applied only after confirmation
+(``--yes`` skips the prompt; without a terminal ``--yes`` or ``--dry-run`` is required).
 
 The plan is a list of small steps, each with ``describe()`` and ``apply(client)``, so later
 work (formula and trigger columns, the summary table, seed rows) adds step types and
@@ -26,8 +29,8 @@ class InitError(Exception):
     """A failure with a message that is safe to print as is."""
 
 
-# REST payloads. Kept small and separate: not yet verified against a live Grist server
-# (column `fields`, Choice `widgetOptions` JSON, `Ref:Table` types, the table-create body).
+# REST payloads. Kept small and separate: column `fields`, Choice `widgetOptions` JSON,
+# `Ref:Table` types and the table-create body were checked against a live Grist server.
 
 
 def column_payload(column: schema.Column) -> dict:
@@ -204,12 +207,61 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         action="store_true",
         help="proceed even if the document has tables that are not part of the contract",
     )
+    p.add_argument(
+        "-y", "--yes", action="store_true", help="apply without asking (for non-interactive use)"
+    )
     args = p.parse_args(argv)
     if args.create and not args.workspace:
         p.error("--create needs --workspace")
     if not args.create and (args.workspace or args.org):
         p.error("--workspace and --org only apply with --create")
     return args
+
+
+DEFAULT_TABLE = "Table1"  # Grist puts an empty table with columns A, B, C in every new document
+DEFAULT_COLUMNS = frozenset({"A", "B", "C"})
+DEFAULT_TABLE_NEXT_STEP = "remove it in Grist, or pass --allow-existing-tables on re-runs"
+
+
+def default_table_state(client: GristClient) -> tuple[bool, str | None]:
+    """Return (present, problem): is Table1 there, and why it must not be removed (if so).
+
+    It may only be removed when it is the only user table, has only Grist's default columns
+    and has no rows.
+    """
+    tables = client.tables()
+    user = [t["id"] for t in tables if t["id"] in unrelated_tables(tables)]
+    if DEFAULT_TABLE not in user:
+        return False, None
+    if user != [DEFAULT_TABLE]:
+        others = ", ".join(t for t in user if t != DEFAULT_TABLE)
+        return True, f"the document has other tables ({others})"
+    extra = sorted(c["id"] for c in client.columns(DEFAULT_TABLE) if c["id"] not in DEFAULT_COLUMNS)
+    if extra:
+        return True, f"it has columns other than A, B, C ({', '.join(extra)})"
+    if client.records(DEFAULT_TABLE) != []:
+        return True, "it has rows"
+    return True, None
+
+
+def remove_default_table(client: GristClient) -> tuple[bool, str | None]:
+    """Remove Grist's untouched, empty default table. Returns (removed, warning).
+
+    Only for a document this run created. The conditions are checked here and again right
+    before the removal; nothing else is ever removed.
+    """
+    for _ in range(2):
+        present, problem = default_table_state(client)
+        if not present:
+            return False, None
+        if problem:
+            return False, f"{DEFAULT_TABLE} not removed: {problem}"
+    client.apply([["RemoveTable", DEFAULT_TABLE]])
+    return True, None
+
+
+def not_created_warning() -> str:
+    return f"{DEFAULT_TABLE} not removed: the document was not created by this run"
 
 
 def run(
@@ -221,68 +273,118 @@ def run(
     def client_for(doc_id: str) -> GristClient:
         return GristClient(config.grist_url, doc_id, config.grist_api_key, transport=transport)
 
-    doc_id = config.grist_doc_id
-    created = False
-    if args.create:
-        with client_for("") as admin:
-            workspace_id = resolve_workspace(admin, args.workspace, args.org)
-            if args.dry_run:
-                print(f"would create document {args.name!r} in workspace {workspace_id}", file=out)
-                # A new document is empty: show the full plan without touching anything.
-                _report_and_apply(build_plan({}), None, True, out)
-                return
-            doc_id = admin.create_doc(workspace_id, args.name)
-        created = True
-        print(f"created document {args.name!r}", file=out)
-        print(f"document id: {doc_id}", file=out)
-        print("put it in GRIST_DOC_ID; it is not saved anywhere", file=out)
-    elif not doc_id:
-        raise InitError("GRIST_DOC_ID is missing (or use --create)")
+    if not args.create:
+        if not config.grist_doc_id:
+            raise InitError("GRIST_DOC_ID is missing (or use --create)")
+        with client_for(config.grist_doc_id) as client:
+            _set_up_existing(client, args, out)
+        return
 
+    with client_for("") as admin:
+        workspace_id = resolve_workspace(admin, args.workspace, args.org)
+    lead = [
+        f"create document {args.name!r} in workspace {workspace_id}",
+        (
+            f"then, if Grist's default table {DEFAULT_TABLE} is untouched and empty "
+            "(only columns A, B, C, no rows), remove it"
+        ),
+    ]
+    # A new document is empty apart from that default table, so the plan is the full contract.
+    plan = build_plan({})
+    if not _show_plan(plan, lead, args, out) or args.dry_run or not _confirm(args, out):
+        return
+    with client_for("") as admin:
+        doc_id = admin.create_doc(workspace_id, args.name)
+    print(f"done: created document {args.name!r}", file=out)
+    print(f"document id: {doc_id}", file=out)
+    print("put it in GRIST_DOC_ID; it is not saved anywhere", file=out)
     try:
-        _set_up(client_for(doc_id), args, created, out)
+        with client_for(doc_id) as client:
+            removed, warning = remove_default_table(client)
+            if removed:
+                print(f"done: removed Grist's default table {DEFAULT_TABLE}", file=out)
+            if warning:
+                print(f"warning: {warning}", file=out)
+            _apply(plan, client, [warning] if warning else [], out)
     except (GristError, InitError) as e:
-        if not created:
-            raise
         raise InitError(
             f"{e}. Document {doc_id} was created; re-run without --create "
             f"using GRIST_DOC_ID={doc_id}"
         ) from None
 
 
-def _set_up(client: GristClient, args: argparse.Namespace, created: bool, out) -> None:
-    with client:
-        tables = client.tables()
-        if not created:
-            extra = unrelated_tables(tables)
-            if extra and not args.allow_existing_tables:
-                raise InitError(
-                    "document has tables that are not part of BestYet ("
-                    + ", ".join(extra)
-                    + "); pass --allow-existing-tables to add to it anyway"
-                )
-        actual = {
-            t: {c["id"]: c.get("fields", {}).get("type", "") for c in client.columns(t)}
-            for t in contract_table_ids(tables)
-        }
-        _report_and_apply(build_plan(actual), client, args.dry_run, out)
+def _set_up_existing(client: GristClient, args: argparse.Namespace, out) -> None:
+    tables = client.tables()
+    extra = unrelated_tables(tables)
+    if extra and not args.allow_existing_tables:
+        hint = ""
+        if DEFAULT_TABLE in extra:
+            hint = (
+                f". A blank document made in Grist has an empty {DEFAULT_TABLE}; "
+                "--create avoids this"
+            )
+        raise InitError(
+            "document has tables that are not part of BestYet ("
+            + ", ".join(extra)
+            + "); pass --allow-existing-tables to add to it anyway"
+            + hint
+        )
+    warnings = [not_created_warning()] if DEFAULT_TABLE in extra else []
+    actual = {
+        t: {c["id"]: c.get("fields", {}).get("type", "") for c in client.columns(t)}
+        for t in contract_table_ids(tables)
+    }
+    plan = build_plan(actual)
+    for w in warnings:
+        print(f"warning: {w}", file=out)
+    if not _show_plan(plan, [], args, out) or args.dry_run or not _confirm(args, out):
+        _finish(plan, warnings, out)
+        return
+    _apply(plan, client, warnings, out)
 
 
-def _report_and_apply(plan: Plan, client: GristClient | None, dry_run: bool, out) -> None:
+def _show_plan(plan: Plan, lead: Sequence[str], args: argparse.Namespace, out) -> bool:
+    """Print notes, conflicts and the whole plan. Returns False when there is nothing to do."""
     for note in plan.notes:
         print(f"note: {note}", file=out)
     for conflict in plan.conflicts:
         print(f"warning: {conflict}; left untouched", file=out)
-    if not plan.steps:
+    lines = [*lead, *(s.describe() for s in plan.steps)]
+    if not lines:
         print("nothing to do: the document already has everything this script adds", file=out)
+        return False
+    print("plan:", file=out)
+    for line in lines:
+        print(f"  - {line}", file=out)
+    if args.dry_run:
+        print("dry run: nothing was changed", file=out)
+    return True
+
+
+def _confirm(args: argparse.Namespace, out) -> bool:
+    if args.yes:
+        return True
+    if not sys.stdin.isatty():
+        raise InitError("not interactive; pass --yes to run non-interactively")
+    out.write("Apply these changes? [y/N] ")
+    out.flush()
+    if sys.stdin.readline().strip().lower() in ("y", "yes"):
+        return True
+    print("not applied: nothing was changed", file=out)
+    return False
+
+
+def _apply(plan: Plan, client: GristClient, warnings: Sequence[str], out) -> None:
     for step in plan.steps:
-        if dry_run:
-            print(f"would {step.describe()}", file=out)
-        else:
-            assert client is not None
-            step.apply(client)
-            print(f"done: {step.describe()}", file=out)
+        step.apply(client)
+        print(f"done: {step.describe()}", file=out)
+    _finish(plan, warnings, out)
+
+
+def _finish(plan: Plan, warnings: Sequence[str], out) -> None:
     print(f"not handled by this script yet: {', '.join(DEFERRED)}", file=out)
+    for w in warnings:
+        print(f"warning: {w}; next step: {DEFAULT_TABLE_NEXT_STEP}", file=out)
     if plan.conflicts:
         raise InitError("document differs from the contract; fix it in Grist")
 

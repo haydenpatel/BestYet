@@ -21,9 +21,18 @@ def unique_id(wanted, existing):
 
 
 class FakeGrist:
-    def __init__(self, tables=None, orgs=None, workspaces=None):
-        # tables: {table id: {column id: fields dict}}
+    def __init__(self, tables=None, orgs=None, workspaces=None, new_doc_tables=None, rows=None):
+        # tables: {table id: {column id: fields dict}}; rows: {table id: [record dicts]}
         self.tables = {t: dict(cols) for t, cols in (tables or {}).items()}
+        self.rows = {t: list(r) for t, r in (rows or {}).items()}
+        # What Grist puts in every new document: an empty Table1 with columns A, B, C.
+        self.new_doc_tables = (
+            new_doc_tables
+            if new_doc_tables is not None
+            else {"Table1": {c: {"type": "Any"} for c in "ABC"}}
+        )
+        self.new_doc_rows: dict[str, list] = {}
+        self.actions: list[list] = []
         self.summary_tables: set[str] = set()
         self.orgs = orgs if orgs is not None else [{"id": 1, "name": "Org One"}]
         self.workspaces = (
@@ -49,12 +58,29 @@ class FakeGrist:
             return httpx.Response(200, json=self.workspaces.get(int(m[1]), []))
         if m := re.fullmatch(r"workspaces/(\d+)/docs", path):
             self.created_docs.append((int(m[1]), body["name"]))
+            self.tables.update({t: dict(c) for t, c in self.new_doc_tables.items()})
+            self.rows.update({t: list(r) for t, r in self.new_doc_rows.items()})
             return httpx.Response(200, json="NEWDOC")
         if m := re.fullmatch(r"docs/([^/]+)/(.*)", path):
             return self.doc(request.method, m[2], body)
         return httpx.Response(404, json={"error": "not found"})
 
     def doc(self, method, rest, body):
+        if rest == "apply" and method == "POST":
+            for action in body:
+                self.actions.append(action)
+                if action[0] == "RemoveTable":
+                    if action[1] not in self.tables:
+                        return httpx.Response(400, json={"error": "no such table"})
+                    del self.tables[action[1]]
+                    self.rows.pop(action[1], None)
+                else:
+                    return httpx.Response(400, json={"error": "unsupported action"})
+            return httpx.Response(200, json={"retValues": [None] * len(body)})
+        if m := re.fullmatch(r"tables/([^/]+)/records", rest):
+            if method != "GET" or m[1] not in self.tables:
+                return httpx.Response(404, json={"error": "not found"})
+            return httpx.Response(200, json={"records": list(self.rows.get(m[1], []))})
         if rest == "tables" and method == "GET":
             return httpx.Response(
                 200,

@@ -171,7 +171,8 @@ Requirements:
 - Makes no assumptions about the environment: it works on a document with any name, against any Grist server. `--create` defaults to the name "BestYet" and accepts any `--name`. Nothing in the script or the app may require a particular name or marker, so anyone can set up a fresh production document with it.
 - Idempotent: running it again on an already initialised document makes no changes and says so. It only adds what is missing and never drops, renames or overwrites anything.
 - Optional `--check`: validates an existing document against the contract and reports every difference. The app reuses the same check at startup.
-- Refuses to modify a document that already has unrelated tables unless the owner passes an explicit flag.
+- Refuses to modify a document that already has unrelated tables unless the owner passes an explicit flag. The one exception is Grist's empty default table (`Table1`, columns A, B, C) in a document the script has just created: it is removed only if it is the only table, has only the default columns and has no rows, and otherwise left with a warning.
+- Prints the whole plan before changing anything and asks for confirmation (`--yes` skips the prompt; `--dry-run` only prints the plan). Without a terminal and without `--yes` or `--dry-run` it refuses. Suitable as a one-off container command: configuration from environment variables only, output on stdout/stderr, nothing written to disk.
 - Prints what it did, never prints the API key, and exits non-zero on failure.
 
 The script is exercised by its own tests: initialise a fresh TEST document, then run the contract check against it, then run the app's integration tests against it.
