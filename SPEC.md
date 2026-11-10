@@ -13,7 +13,7 @@ Let a parent or coach, from a phone:
 ## Principles
 
 - **Stateless.** No database, no files, no sessions beyond what is needed to render a page. Deleting and recreating the container loses nothing.
-- **Grist owns the logic.** Mark parsing, PB rules and defaults live in Grist formulas. The app reads computed columns and writes raw inputs, so the phone and the desktop view can never disagree.
+- **Grist owns the logic.** Mark parsing, PB rules and defaults live in Grist formulas. The app reads computed columns (including the PB summary table) and writes raw inputs, so the phone and the desktop view can never disagree.
 - **No built-in login.** The app is meant to run on a private network behind whatever access control the owner already uses. Do not build user accounts.
 - **Secrets stay server-side.** The Grist API key is read from the environment and must never reach the browser, logs or rendered HTML.
 - **Small and readable.** A few hundred lines. Prefer boring tools over frameworks.
@@ -77,7 +77,12 @@ Computed by Grist, read only (never write these):
 - Limitation: `Implement` is triggered by `Event` only. Send `Athlete` and `Event` in the same create call so both defaults resolve. A later edit to Athlete or Grade does not recompute Implement.
 
 ### PB summary table
-`Results_summary_Athlete_Event_Implement` has one row per Athlete, Event and Implement, with `count` and `Best` (Numeric). Prefer it for the PB screen. If it is missing or renamed, fall back to a SQL query with the same logic.
+`Results_summary_Athlete_Event_Implement` has one row per Athlete, Event and Implement, with `count` and `Best` (Numeric). It is part of the contract, and the app reads personal bests from it: the app never calculates them. If it is missing or renamed, the startup check fails.
+
+Grist keeps a summary table only while a view section uses it. The contract therefore also includes a page named `Personal bests` (the desktop view of personal bests) that shows the summary table. Do not delete the page.
+
+### Ref columns show names
+`Results.Athlete`, `Results.Event`, `Results.Meet` and `Implements.Event` show the target's `Name`, not the row id (Grist `visibleCol`), and so do the summary table's Athlete and Event columns.
 
 ### Reference formulas (to recreate the schema in a fresh document)
 
@@ -128,6 +133,7 @@ return min(vals) if $Event.Kind == "Time" else max(vals)
 - SQL (SELECT only): `POST /api/docs/{doc}/sql` with `{"sql":"...","args":[...]}`.
 - Ref columns are numeric row ids in both directions. Resolve names to ids by loading Athletes, Events and Meets per request, or cache briefly in memory with a short TTL (data is edited directly in Grist too).
 - Date columns are Unix seconds at UTC midnight (for example 1 Nov 2026 is `1793491200`). Convert with no time zone applied, so the date entered is the date stored and shown; the configured time zone is only used to work out today's date.
+- Setting up a column: `recalcDeps` of a trigger column is sent as `["L", colRef, ...]` in an update after the column is created, not in the create call. `visibleCol` needs a display column too: set it, then apply `SetDisplayFormula` (for example `$Athlete.Name`). Both were checked against a running Grist.
 - Verify behaviour against the running Grist version rather than assuming newer endpoints.
 
 ## Screens (mobile first, thumb friendly)
@@ -165,7 +171,7 @@ The repo must include a script, with documentation in the README, that sets up a
 Requirements:
 - Uses Grist's REST API only, with the same `GRIST_URL` and `GRIST_API_KEY` settings as the app.
 - Can create a new empty document in a given workspace (for example `--create --workspace <id-or-name> --name "..."`), or set up an existing empty document given by `GRIST_DOC_ID`.
-- Creates the tables, columns, Choice lists, Ref links, the computed and trigger formulas from "Reference formulas", and the PB summary table with its `Best` column.
+- Creates the tables, columns, Choice lists, Ref links, the computed and trigger formulas from "Reference formulas", and the PB summary table with its `Best` column. The summary table is created through a view section on the `Personal bests` page, only if that page is missing; an existing page is never changed. It sets `visibleCol` on the Ref columns listed under "Ref columns show names" only where it is unset, and creates no other pages or forms (the other pages are Grist's own raw-data views).
 - Seeds the Events table (the example list) and the Implements table (optional, with the example rows).
 - Optional `--demo-data`: loads a few fictional athletes, meets and results so the app has something to show. The demo data must be obviously fake. It only loads into a document whose Athletes, Meets and Results tables are all empty (or one the script has just created), and otherwise refuses. This protects real data without restricting what the document is called.
 - Makes no assumptions about the environment: it works on a document with any name, against any Grist server. `--create` defaults to the name "BestYet" and accepts any `--name`. Nothing in the script or the app may require a particular name or marker, so anyone can set up a fresh production document with it.

@@ -151,6 +151,11 @@ class GristClient:
         result = self._doc(f"tables/{_q(table)}/columns", method="POST", body=body)
         return [c["id"] for c in result["columns"]]
 
+    def update_columns(self, table: str, columns: list[dict]) -> None:
+        """Update columns given as `{"id": "C", "fields": {...}}`."""
+        body = {"columns": columns}
+        self._doc(f"tables/{_q(table)}/columns", method="PATCH", body=body)
+
     # Organisations, workspaces and documents (init script).
 
     def orgs(self) -> list:

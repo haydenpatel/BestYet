@@ -34,6 +34,10 @@ class FakeGrist:
         self.new_doc_rows: dict[str, list] = {}
         self.actions: list[list] = []
         self.summary_tables: set[str] = set()
+        self.views: dict[int, str] = {}  # page (view) ref -> name
+        self.refs: dict[tuple[str, str], int] = {}  # (table id, column id) -> colRef
+        self.next_ref = 100
+        self.display: dict[tuple[str, int], str] = {}  # (table, colRef) -> display formula
         self.orgs = orgs if orgs is not None else [{"id": 1, "name": "Org One"}]
         self.workspaces = (
             workspaces if workspaces is not None else {1: [{"id": 10, "name": "Work"}]}
@@ -67,16 +71,29 @@ class FakeGrist:
 
     def doc(self, method, rest, body):
         if rest == "apply" and method == "POST":
+            rets = []
             for action in body:
                 self.actions.append(action)
-                if action[0] == "RemoveTable":
+                rets.append(None)
+                if action[0] == "CreateViewSection":
+                    rets[-1] = self.create_view_section(action)
+                elif action[0] == "UpdateRecord" and action[1] == "_grist_Views":
+                    self.views[action[2]] = action[3]["name"]
+                elif action[0] == "SetDisplayFormula":
+                    self.display[(action[1], action[3])] = action[4]
+                elif action[0] == "RemoveTable":
                     if action[1] not in self.tables:
                         return httpx.Response(400, json={"error": "no such table"})
                     del self.tables[action[1]]
                     self.rows.pop(action[1], None)
                 else:
                     return httpx.Response(400, json={"error": "unsupported action"})
-            return httpx.Response(200, json={"retValues": [None] * len(body)})
+            return httpx.Response(200, json={"retValues": rets})
+        if rest == "tables/_grist_Views/records":
+            return httpx.Response(
+                200,
+                json={"records": [{"id": i, "fields": {"name": n}} for i, n in self.views.items()]},
+            )
         if m := re.fullmatch(r"tables/([^/]+)/records", rest):
             if method != "GET" or m[1] not in self.tables:
                 return httpx.Response(404, json={"error": "not found"})
@@ -88,7 +105,10 @@ class FakeGrist:
                     "tables": [
                         {
                             "id": t,
-                            "fields": {"summarySourceTable": 5 if t in self.summary_tables else 0},
+                            "fields": {
+                                "summarySourceTable": 5 if t in self.summary_tables else 0,
+                                "tableRef": self.ref(t, ""),
+                            },
                         }
                         for t in self.tables
                     ]
@@ -108,8 +128,15 @@ class FakeGrist:
             if table is None:
                 return httpx.Response(404, json={"error": "no table"})
             if method == "GET":
-                cols = [{"id": c, "fields": f} for c, f in table.items()]
+                cols = [
+                    {"id": c, "fields": {**f, "colRef": self.ref(m[1], c)}}
+                    for c, f in table.items()
+                ]
                 return httpx.Response(200, json={"columns": cols})
+            if method == "PATCH":
+                for c in body["columns"]:
+                    table[c["id"]] = {**table[c["id"]], **c["fields"]}
+                return httpx.Response(200)
             ids = []
             for c in body["columns"]:
                 new = unique_id(c["id"], table)
@@ -117,3 +144,24 @@ class FakeGrist:
                 ids.append(new)
             return httpx.Response(200, json={"columns": [{"id": i} for i in ids]})
         return httpx.Response(404, json={"error": "not found"})
+
+    def ref(self, table, column):
+        if (table, column) not in self.refs:
+            self.next_ref += 1
+            self.refs[(table, column)] = self.next_ref
+        return self.refs[(table, column)]
+
+    def create_view_section(self, action):
+        """CreateViewSection on a source table grouped by columns: a summary table and a page."""
+        _, table_ref, view_ref, kind, group, _ = action
+        assert view_ref == 0 and kind == "record"
+        source = next(t for t in self.tables if self.ref(t, "") == table_ref)
+        by = [c for c in self.tables[source] if self.ref(source, c) in group]
+        name = f"{source}_summary_{'_'.join(by)}"
+        if name not in self.tables:
+            self.tables[name] = {c: dict(self.tables[source][c]) for c in by}
+            self.tables[name]["count"] = {"type": "Int"}
+            self.summary_tables.add(name)
+        view = max(self.views, default=0) + 1
+        self.views[view] = name.replace("_", " ")
+        return {"tableRef": self.ref(name, ""), "viewRef": view, "sectionRef": view}

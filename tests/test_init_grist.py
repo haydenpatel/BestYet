@@ -19,7 +19,30 @@ def plain(table):
 
 
 def full_tables():
-    return {t.id: {c.id: {"type": c.type} for c in plain(t)} for t in schema.TABLES}
+    """A fully initialised document: contract tables, summary table, names shown."""
+    tables = {
+        t.id: {
+            c.id: {"type": c.type, **({"visibleCol": 1} if c.visible_col else {})}
+            for c in t.columns
+        }
+        for t in schema.TABLES
+    }
+    tables[schema.SUMMARY.id] = {"count": {"type": "Int"}, "Best": {"type": "Numeric"}}
+    tables[schema.SUMMARY.id].update(
+        {g: {"type": "Ref:X", "visibleCol": 1} for g in schema.SUMMARY.group_by[:2]}
+    )
+    return tables
+
+
+def removals(fake):
+    return [a for a in fake.actions if a[0] == "RemoveTable"]
+
+
+def full_fake(tables=None):
+    fake = FakeGrist(tables if tables is not None else full_tables())
+    fake.summary_tables.add(schema.SUMMARY.id)
+    fake.views[1] = schema.SUMMARY.page
+    return fake
 
 
 ENV_NO_DOC = {k: v for k, v in ENV.items() if k != "GRIST_DOC_ID"}
@@ -56,16 +79,108 @@ def spy_first_write(fake, capsys):
     return seen
 
 
-def test_fresh_doc_gets_all_tables_and_plain_columns(capsys):
+def test_fresh_doc_gets_the_whole_contract(capsys):
     fake = FakeGrist()
     assert run(fake) == 0
-    assert set(fake.tables) == {t.id for t in schema.TABLES}
+    assert set(fake.tables) == {t.id for t in schema.TABLES} | {schema.SUMMARY.id}
     for t in schema.TABLES:
-        assert set(fake.tables[t.id]) == {c.id for c in plain(t)}
-    assert fake.tables["Results"]["Athlete"] == {"type": "Ref:Athletes"}
+        assert set(fake.tables[t.id]) == {c.id for c in t.columns}
+    assert fake.tables["Results"]["Athlete"]["type"] == "Ref:Athletes"
     assert fake.tables["Meets"]["Date"] == {"type": "Date"}
     out = capsys.readouterr().out
-    assert "not handled by this script yet" in out
+    assert "not handled by this script yet: seed rows" in out
+
+
+def test_formula_and_trigger_columns_carry_their_settings():
+    fake = FakeGrist()
+    run(fake)
+    results = fake.tables["Results"]
+    for name in ("Value", "Date", "IsPB"):
+        col = schema.table("Results").columns[
+            [c.id for c in schema.table("Results").columns].index(name)
+        ]
+        assert results[name]["isFormula"] is True and results[name]["formula"] == col.formula
+    grade, implement = results["Grade"], results["Implement"]
+    assert grade["isFormula"] is False and grade["formula"] == schema.GRADE_FORMULA
+    assert implement["isFormula"] is False and implement["formula"] == schema.IMPLEMENT_FORMULA
+    # Triggers fire on new records or a dependency change, and name the column by its ref.
+    assert grade["recalcWhen"] == implement["recalcWhen"] == 0
+    assert grade["recalcDeps"] == ["L", fake.refs[("Results", "Athlete")]]
+    assert implement["recalcDeps"] == ["L", fake.refs[("Results", "Event")]]
+
+
+def test_summary_table_is_created_through_a_page_and_has_best():
+    fake = FakeGrist()
+    run(fake)
+    assert fake.summary_tables == {schema.SUMMARY.id}
+    assert list(fake.views.values()) == ["Personal bests"]
+    [create] = [a for a in fake.actions if a[0] == "CreateViewSection"]
+    group = [fake.refs[("Results", g)] for g in schema.SUMMARY.group_by]
+    assert create[1] == fake.refs[("Results", "")] and create[2] == 0 and create[4] == group
+    best = fake.tables[schema.SUMMARY.id]["Best"]
+    assert best["isFormula"] is True and best["formula"] == schema.BEST_FORMULA
+
+
+def test_ref_columns_show_names():
+    fake = FakeGrist()
+    run(fake)
+    for table, col, target in [
+        ("Results", "Athlete", "Athletes"),
+        ("Results", "Event", "Events"),
+        ("Results", "Meet", "Meets"),
+        ("Implements", "Event", "Events"),
+    ]:
+        assert fake.tables[table][col]["visibleCol"] == fake.refs[(target, "Name")]
+    athlete = fake.refs[("Results", "Athlete")]
+    assert fake.display[("Results", athlete)] == "$Athlete.Name"  # shows names, not just visibleCol
+    summary = fake.tables[schema.SUMMARY.id]
+    assert summary["Athlete"]["visibleCol"] == fake.refs[("Athletes", "Name")]
+    assert summary["Event"]["visibleCol"] == fake.refs[("Events", "Name")]
+
+
+def test_existing_visible_col_and_page_are_never_changed():
+    tables = full_tables()
+    tables["Results"]["Athlete"]["visibleCol"] = 77  # the owner's choice
+    fake = full_fake(tables)
+    fake.views[1] = schema.SUMMARY.page
+    assert run(fake) == 0
+    assert fake.writes == []
+    assert fake.tables["Results"]["Athlete"]["visibleCol"] == 77
+
+
+def test_visible_col_set_only_where_unset():
+    tables = full_tables()
+    tables["Results"]["Athlete"]["visibleCol"] = 77
+    del tables["Results"]["Event"]["visibleCol"]
+    fake = full_fake(tables)
+    assert run(fake) == 0
+    assert fake.tables["Results"]["Athlete"]["visibleCol"] == 77
+    assert fake.tables["Results"]["Event"]["visibleCol"] == fake.refs[("Events", "Name")]
+
+
+def test_missing_page_is_created_for_an_existing_summary_table():
+    fake = full_fake()
+    fake.views.clear()
+    assert run(fake) == 0
+    assert list(fake.views.values()) == ["Personal bests"]
+    assert len([a for a in fake.actions if a[0] == "CreateViewSection"]) == 1
+
+
+def test_page_without_summary_table_is_a_conflict_and_changes_nothing(capsys):
+    tables = full_tables()
+    del tables[schema.SUMMARY.id]
+    fake = FakeGrist(tables)
+    fake.views[1] = schema.SUMMARY.page
+    assert run(fake) == 1
+    assert fake.writes == []
+    assert "exists but summary table" in capsys.readouterr().out
+
+
+def test_plain_table_with_the_summary_name_is_a_conflict(capsys):
+    fake = full_fake()
+    fake.summary_tables.clear()
+    assert run(fake) == 1
+    assert fake.writes == []
 
 
 def test_choice_columns_carry_choices():
@@ -92,7 +207,7 @@ def test_partial_doc_gets_only_missing_parts(capsys):
     del tables["Meets"]
     del tables["Results"]["Mark"]
     tables["Athletes"]["Name"] = {"type": "Numeric"}  # wrong type: noted, not changed
-    fake = FakeGrist(tables)
+    fake = full_fake(tables)
     assert run(fake) == 0
     assert set(fake.tables["Meets"]) == {"Name", "Date", "Location"}
     assert fake.tables["Results"]["Mark"] == {"type": "Text"}
@@ -116,9 +231,7 @@ def test_unrelated_tables_refused_then_allowed(capsys):
 
 
 def test_summary_table_alone_is_not_unrelated():
-    fake = FakeGrist(full_tables())
-    fake.tables[schema.SUMMARY.id] = {"count": {"type": "Int"}}
-    fake.summary_tables.add(schema.SUMMARY.id)
+    fake = full_fake()
     assert run(fake) == 0
     assert fake.writes == []
 
@@ -225,10 +338,15 @@ def test_script_has_no_environment_marker():
         assert "TEST" not in f.read()
 
 
-def test_plan_skips_formula_columns():
+def test_plan_creates_plain_columns_first_then_formulas():
     steps = build_plan({}).steps
-    results = next(s for s in steps if s.table.id == "Results")
+    results = next(s for s in steps if getattr(s, "table", None) and s.table.id == "Results")
     assert {c.id for c in results.columns} == {"Athlete", "Event", "Meet", "Mark", "Place"}
+    later = next(
+        s for s in steps if getattr(s, "table", None) == "Results" and hasattr(s, "columns")
+    )
+    assert [c.id for c in later.columns] == ["Grade", "Implement", "Value", "Date", "IsPB"]
+    assert steps.index(results) < steps.index(later)
     assert column_payload(schema.table("Meets").columns[1]) == {
         "id": "Date",
         "fields": {"type": "Date"},
@@ -247,7 +365,7 @@ def test_client_add_methods_hit_expected_endpoints():
 def test_case_only_column_conflict_warns_and_fails(capsys):
     tables = full_tables()
     tables["Athletes"]["name"] = tables["Athletes"].pop("Name")
-    fake = FakeGrist(tables)
+    fake = full_fake(tables)
     assert run(fake) == 1
     captured = capsys.readouterr()
     assert "'name'" in captured.out and "'Name'" in captured.out
@@ -259,7 +377,7 @@ def test_case_only_column_conflict_warns_and_fails(capsys):
 def test_case_only_table_conflict_warns_and_fails(capsys):
     tables = full_tables()
     tables["meets"] = tables.pop("Meets")
-    fake = FakeGrist(tables)
+    fake = full_fake(tables)
     assert run(fake) == 1
     assert "'meets'" in capsys.readouterr().out
     assert fake.writes == [] and "Meets" not in fake.tables
@@ -307,8 +425,8 @@ def test_create_then_rerun_is_a_noop(capsys):
     assert run(fake, *CREATE, env=ENV_NO_DOC) == 0
     out = capsys.readouterr().out
     assert "document id: NEWDOC" in out and "warning" not in out
-    assert "Table1" not in fake.tables and fake.actions == [["RemoveTable", "Table1"]]
-    assert set(fake.tables) == {t.id for t in schema.TABLES}
+    assert "Table1" not in fake.tables and removals(fake) == [["RemoveTable", "Table1"]]
+    assert set(fake.tables) == {t.id for t in schema.TABLES} | {schema.SUMMARY.id}
     fake.writes.clear()
     assert run(fake) == 0
     assert fake.writes == []
@@ -341,7 +459,7 @@ def test_default_table_kept_with_warning_when_a_condition_fails(
     fake.new_doc_rows = new_rows
     assert run(fake, *CREATE, env=ENV_NO_DOC) == 0
     out = capsys.readouterr().out
-    assert "Table1" in fake.tables and fake.actions == []
+    assert "Table1" in fake.tables and removals(fake) == []
     assert "Athletes" in fake.tables
     warning = f"warning: Table1 not removed: {reason}"
     assert out.count(warning) == 2  # when found, and again in the summary
@@ -375,7 +493,7 @@ def test_default_table_fully_rechecked_right_before_removal(capsys, change, reas
 
     fake.transport = httpx.MockTransport(handle)
     assert run(fake, *CREATE, env=ENV_NO_DOC) == 0
-    assert "Table1" in fake.tables and fake.actions == []
+    assert "Table1" in fake.tables and removals(fake) == []
     assert f"Table1 not removed: {reason}" in capsys.readouterr().out
 
 
@@ -455,7 +573,7 @@ def test_existing_document_keeps_default_table_and_warns(capsys):
     fake = FakeGrist({"Table1": DEFAULTS})
     assert run(fake, "--allow-existing-tables") == 0
     out = capsys.readouterr().out
-    assert "Table1" in fake.tables and fake.actions == []
+    assert "Table1" in fake.tables and removals(fake) == []
     warning = "warning: Table1 not removed: the document was not created by this run"
     assert out.count(warning) == 2 and "next step" in out
 
@@ -549,6 +667,6 @@ def test_dry_run_and_nothing_to_do_never_prompt(monkeypatch, capsys):
     assert run(fake, *CREATE, "--dry-run", env=ENV_NO_DOC, yes=False) == 0
     assert "Table1" in capsys.readouterr().out
     assert fake.created_docs == [] and fake.writes == []
-    done = FakeGrist(full_tables())
+    done = full_fake()
     assert run(done, yes=False) == 0
     assert "nothing to do" in capsys.readouterr().out
