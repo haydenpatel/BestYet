@@ -25,6 +25,10 @@ VALID = [
     ("2:15.30", "2:15.30", 135.3),
     ("2:15", "2:15", 135.0),
     ("10:05.5", "10:05.5", 605.5),
+    ("007", "7", 7.0),
+    ("007.50", "7.50", 7.5),
+    ("0.5", "0.5", 0.5),
+    ("00:30", "0:30", 30.0),
     ("0:59.99", "0:59.99", 59.99),
     ("  13.45  ", "13.45", 13.45),
     ("2,98", "2.98", 2.98),
@@ -34,7 +38,7 @@ VALID = [
     ("5.20m", "5.20", 5.2),
     ("5.20M", "5.20", 5.2),
     ("5.20 m", "5.20", 5.2),
-    (" 2:15.30s ", "2:15.30", 135.3),
+    (" 2:15.30 ", "2:15.30", 135.3),
     ("02:15.30", "2:15.30", 135.3),
     ("0.01", "0.01", 0.01),
 ]
@@ -72,6 +76,14 @@ INVALID = [
     ("2.98ms", marks.MSG_INVALID),
     ("2.98ss", marks.MSG_INVALID),
     ("2.98 sec", marks.MSG_INVALID),
+    ("2:15.30m", marks.MSG_UNIT),
+    ("2:15.30 s", marks.MSG_UNIT),
+    ("2:5", marks.MSG_SEC_DIGITS),
+    ("2:5.5", marks.MSG_SEC_DIGITS),
+    ("2:150", marks.MSG_SEC_DIGITS),
+    ("2.1234567", marks.MSG_PRECISION),
+    ("2:15.1234567", marks.MSG_PRECISION),
+    ("00", marks.MSG_ZERO),
     ("nan", marks.MSG_INVALID),
     ("inf", marks.MSG_INVALID),
     ("-inf", marks.MSG_INVALID),
@@ -80,7 +92,6 @@ INVALID = [
     ("1,000.5", marks.MSG_INVALID),
     ("2:15:30", marks.MSG_INVALID),
     ("2:-5", marks.MSG_INVALID),
-    ("2:150", marks.MSG_INVALID),
     ("\u0662.\u0669", marks.MSG_INVALID),  # non-ASCII digits
     ("9" * 400, marks.MSG_INVALID),
     ("2.98\n13", marks.MSG_INVALID),
@@ -102,7 +113,10 @@ def test_invalid(text, message):
     assert r.warning is None
 
 
-@pytest.mark.parametrize(("text", "normalised"), [("2.981", "2.981"), ("2:15.305s", "2:15.305")])
+@pytest.mark.parametrize(
+    ("text", "normalised"),
+    [("2.981", "2.981"), ("2.980", "2.980"), ("2:15.305", "2:15.305"), ("2.123456", "2.123456")],
+)
 def test_more_than_two_decimals_warns_but_is_allowed(text, normalised):
     r = parse_mark(text)
     assert r.ok
@@ -122,6 +136,9 @@ def test_messages_are_short_single_line_sentences():
         marks.MSG_SECONDS,
         marks.MSG_ZERO,
         marks.MSG_DECIMALS,
+        marks.MSG_SEC_DIGITS,
+        marks.MSG_UNIT,
+        marks.MSG_PRECISION,
     ]
     for msg in msgs:
         assert msg.endswith(".")
