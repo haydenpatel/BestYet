@@ -5,8 +5,9 @@ Run as ``python -m bestyet.init_grist`` (or ``bestyet-init``). It builds a plan 
 missing tables, columns (plain, formula and trigger), the PB summary table with its page, and
 ``visibleCol`` on Ref columns where it is unset. It never drops, renames, retypes or
 overwrites; the one exception is Grist's own empty default table in a document this run
-created (see ``remove_default_table``). The whole plan is printed first and applied only after confirmation
-(``--yes`` skips the prompt; without a terminal ``--yes`` or ``--dry-run`` is required).
+created (see ``remove_default_table``). The whole plan is printed first and applied only
+after confirmation (``--yes`` skips the prompt; without a terminal ``--yes`` or ``--dry-run``
+is required).
 
 The plan is a list of small steps, each with ``describe()`` and ``apply(client)``, so later
 work (seed rows) adds step types and extends ``build_plan`` without touching the CLI.
