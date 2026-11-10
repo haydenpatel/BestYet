@@ -1,0 +1,34 @@
+# Private, environment-specific context. Never commit.
+handover.md
+
+# Secrets and local config
+.env
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# macOS
+.DS_Store
+
+# Local deployment snippets and env variants
+deploy.local.yml
+*.local.yml
+.env.*
+!.env.example
+
+# Tooling
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+dist/
+build/
+*.egg-info/
+.idea/
+.vscode/
+
+# Claude Code local config (agents, worktrees)
+.claude/
