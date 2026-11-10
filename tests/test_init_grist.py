@@ -210,3 +210,65 @@ def test_client_add_methods_hit_expected_endpoints():
         c.add_columns("T", [{"id": "B", "fields": {"type": "Int"}}])
     assert fake.tables["U"] == {"A": {"type": "Text"}}
     assert fake.tables["T"] == {"B": {"type": "Int"}}
+
+
+def test_case_only_column_conflict_warns_and_fails(capsys):
+    tables = full_tables()
+    tables["Athletes"]["name"] = tables["Athletes"].pop("Name")
+    fake = FakeGrist(tables)
+    assert run(fake) == 1
+    captured = capsys.readouterr()
+    assert "'name'" in captured.out and "'Name'" in captured.out
+    assert "fix it in Grist" in captured.err
+    assert fake.writes == []
+    assert set(fake.tables["Athletes"]) == {"name", "Grade"}
+
+
+def test_case_only_table_conflict_warns_and_fails(capsys):
+    tables = full_tables()
+    tables["meets"] = tables.pop("Meets")
+    fake = FakeGrist(tables)
+    assert run(fake) == 1
+    assert "'meets'" in capsys.readouterr().out
+    assert fake.writes == [] and "Meets" not in fake.tables
+
+
+def test_renamed_ids_stop_with_error(capsys):
+    from bestyet.init_grist import AddColumns, CreateTable
+
+    fake = FakeGrist({"Athletes": {"Name": {"type": "Text"}}})
+    client = GristClient(BASE, DOC, Config.from_env(ENV).grist_api_key, transport=fake.transport)
+    col = schema.table("Athletes").columns[0]
+    with pytest.raises(Exception, match="Name2"):
+        AddColumns("Athletes", (col,)).apply(client)
+    with pytest.raises(Exception, match="Athletes2"):
+        CreateTable(schema.table("Athletes"), (col,)).apply(client)
+
+
+def test_failure_after_create_repeats_doc_id(capsys):
+    fake = FakeGrist()
+    fake.fail_on = "POST /api/docs/NEWDOC/tables"
+    env = {k: v for k, v in ENV.items() if k != "GRIST_DOC_ID"}
+    assert run(fake, "--create", "--workspace", "Work", env=env) == 1
+    err = capsys.readouterr().err
+    assert "GRIST_DOC_ID=NEWDOC" in err and "without --create" in err
+    assert err.count("\n") == 1
+
+
+def test_failure_without_create_has_no_doc_hint(capsys):
+    fake = FakeGrist()
+    fake.fail_on = "POST"
+    assert run(fake) == 1
+    assert "re-run" not in capsys.readouterr().err
+
+
+def test_create_skips_unrelated_table_check():
+    fake = FakeGrist({"Table1": {}})
+    assert run(fake, "--create", "--workspace", "Work") == 0
+    assert "Athletes" in fake.tables
+
+
+def test_unrelated_tables_columns_not_read():
+    fake = FakeGrist({"Notes": {}})
+    fake.fail_on = "tables/Notes/columns"
+    assert run(fake, "--allow-existing-tables") == 0

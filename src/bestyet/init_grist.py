@@ -42,6 +42,15 @@ def table_payload(table: schema.Table, columns: Sequence[schema.Column]) -> dict
     return {"id": table.id, "columns": [column_payload(c) for c in columns]}
 
 
+def _check_ids(sent: Sequence[str], got: Sequence[str]) -> None:
+    """Grist renames an id that clashes (ignoring case), e.g. `Name2`; stop if it did."""
+    if list(sent) != list(got):
+        raise InitError(
+            f"Grist assigned ids {', '.join(got)} instead of {', '.join(sent)}; "
+            "the document needs a manual fix in Grist"
+        )
+
+
 # Plan steps.
 
 
@@ -63,7 +72,8 @@ class CreateTable(Step):
         return f"create table {self.table.id} ({names})"
 
     def apply(self, client: GristClient) -> None:
-        client.add_tables([table_payload(self.table, self.columns)])
+        sent = [self.table.id]
+        _check_ids(sent, client.add_tables([table_payload(self.table, self.columns)]))
 
 
 @dataclass(frozen=True)
@@ -76,13 +86,15 @@ class AddColumns(Step):
         return f"add columns to {self.table}: {names}"
 
     def apply(self, client: GristClient) -> None:
-        client.add_columns(self.table, [column_payload(c) for c in self.columns])
+        sent = [c.id for c in self.columns]
+        _check_ids(sent, client.add_columns(self.table, [column_payload(c) for c in self.columns]))
 
 
 @dataclass
 class Plan:
     steps: list[Step] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)  # reported, never acted on
+    conflicts: list[str] = field(default_factory=list)  # case-only id clashes: the run fails
 
 
 # Contract parts that later issues implement; named in the output so they are not silent.
@@ -98,34 +110,56 @@ def _is_plain(column: schema.Column) -> bool:
 
 
 def unrelated_tables(actual_tables: Sequence[Mapping]) -> list[str]:
-    """Ids of tables that are neither in the contract nor summary tables."""
-    known = {t.id for t in schema.TABLES} | {schema.SUMMARY.id}
+    """Ids of tables that are neither in the contract nor summary tables (ids ignore case)."""
+    known = {t.id.lower() for t in schema.TABLES} | {schema.SUMMARY.id.lower()}
     return [
         t["id"]
         for t in actual_tables
-        if t["id"] not in known
+        if t["id"].lower() not in known
         and not t.get("fields", {}).get("summarySourceTable")
         and not t["id"].startswith("_grist_")
     ]
 
 
+def contract_table_ids(actual_tables: Sequence[Mapping]) -> list[str]:
+    known = {t.id.lower() for t in schema.TABLES}
+    return [t["id"] for t in actual_tables if t["id"].lower() in known]
+
+
 def build_plan(actual: Mapping[str, Mapping[str, str]]) -> Plan:
-    """Diff the contract against `actual` (table id -> {column id: type}); additions only."""
+    """Diff the contract against `actual` (table id -> {column id: type}); additions only.
+
+    Grist keeps ids unique ignoring case, so ids are matched ignoring case. A case-only
+    difference is never added or renamed: it is a conflict the owner must fix in Grist.
+    """
     plan = Plan()
+    tables = {t.lower(): t for t in actual}
     for table in schema.TABLES:
         plain = tuple(c for c in table.columns if _is_plain(c))
-        if table.id not in actual:
+        actual_id = tables.get(table.id.lower())
+        if actual_id is None:
             plan.steps.append(CreateTable(table, plain))
             continue
-        have = actual[table.id]
-        missing = tuple(c for c in plain if c.id not in have)
-        if missing:
-            plan.steps.append(AddColumns(table.id, missing))
+        if actual_id != table.id:
+            plan.conflicts.append(f"table {actual_id!r} exists, contract says {table.id!r}")
+            continue
+        have = {c.lower(): c for c in actual[actual_id]}
+        missing = []
         for c in plain:
-            if c.id in have and have[c.id] != c.type:
-                plan.notes.append(
-                    f"{table.id}.{c.id} has type {have[c.id]}, contract says {c.type}; left as is"
+            found = have.get(c.id.lower())
+            if found is None:
+                missing.append(c)
+            elif found != c.id:
+                plan.conflicts.append(
+                    f"{table.id}: column {found!r} exists, contract says {c.id!r}"
                 )
+            elif actual[actual_id][found] != c.type:
+                plan.notes.append(
+                    f"{table.id}.{c.id} has type {actual[actual_id][found]}, "
+                    f"contract says {c.type}; left as is"
+                )
+        if missing:
+            plan.steps.append(AddColumns(table.id, tuple(missing)))
     return plan
 
 
@@ -188,6 +222,7 @@ def run(
         return GristClient(config.grist_url, doc_id, config.grist_api_key, transport=transport)
 
     doc_id = config.grist_doc_id
+    created = False
     if args.create:
         with client_for("") as admin:
             workspace_id = resolve_workspace(admin, args.workspace, args.org)
@@ -197,31 +232,47 @@ def run(
                 _report_and_apply(build_plan({}), None, True, out)
                 return
             doc_id = admin.create_doc(workspace_id, args.name)
+        created = True
         print(f"created document {args.name!r}", file=out)
         print(f"document id: {doc_id}", file=out)
         print("put it in GRIST_DOC_ID; it is not saved anywhere", file=out)
     elif not doc_id:
         raise InitError("GRIST_DOC_ID is missing (or use --create)")
 
-    with client_for(doc_id) as client:
+    try:
+        _set_up(client_for(doc_id), args, created, out)
+    except (GristError, InitError) as e:
+        if not created:
+            raise
+        raise InitError(
+            f"{e}. Document {doc_id} was created; re-run without --create "
+            f"using GRIST_DOC_ID={doc_id}"
+        ) from None
+
+
+def _set_up(client: GristClient, args: argparse.Namespace, created: bool, out) -> None:
+    with client:
         tables = client.tables()
+        if not created:
+            extra = unrelated_tables(tables)
+            if extra and not args.allow_existing_tables:
+                raise InitError(
+                    "document has tables that are not part of BestYet ("
+                    + ", ".join(extra)
+                    + "); pass --allow-existing-tables to add to it anyway"
+                )
         actual = {
-            t["id"]: {c["id"]: c.get("fields", {}).get("type", "") for c in client.columns(t["id"])}
-            for t in tables
+            t: {c["id"]: c.get("fields", {}).get("type", "") for c in client.columns(t)}
+            for t in contract_table_ids(tables)
         }
-        extra = unrelated_tables(tables)
-        if extra and not args.allow_existing_tables:
-            raise InitError(
-                "document has tables that are not part of BestYet ("
-                + ", ".join(extra)
-                + "); pass --allow-existing-tables to add to it anyway"
-            )
         _report_and_apply(build_plan(actual), client, args.dry_run, out)
 
 
 def _report_and_apply(plan: Plan, client: GristClient | None, dry_run: bool, out) -> None:
     for note in plan.notes:
         print(f"note: {note}", file=out)
+    for conflict in plan.conflicts:
+        print(f"warning: {conflict}; left untouched", file=out)
     if not plan.steps:
         print("nothing to do: the document already has everything this script adds", file=out)
     for step in plan.steps:
@@ -232,6 +283,8 @@ def _report_and_apply(plan: Plan, client: GristClient | None, dry_run: bool, out
             step.apply(client)
             print(f"done: {step.describe()}", file=out)
     print(f"not handled by this script yet: {', '.join(DEFERRED)}", file=out)
+    if plan.conflicts:
+        raise InitError("document differs from the contract; fix it in Grist")
 
 
 def main(

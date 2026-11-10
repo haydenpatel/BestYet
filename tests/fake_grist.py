@@ -10,6 +10,16 @@ BASE = "https://grist.example.test"
 DOC = "DOC_ID_HERE"
 
 
+def unique_id(wanted, existing):
+    """Like Grist: ids are unique ignoring case; a clash gets a numeric suffix (Name2)."""
+    taken = {k.lower() for k in existing}
+    new, n = wanted, 1
+    while new.lower() in taken:
+        n += 1
+        new = f"{wanted}{n}"
+    return new
+
+
 class FakeGrist:
     def __init__(self, tables=None, orgs=None, workspaces=None):
         # tables: {table id: {column id: fields dict}}
@@ -59,11 +69,14 @@ class FakeGrist:
                 },
             )
         if rest == "tables" and method == "POST":
+            ids = []
             for t in body["tables"]:
-                if t["id"] in self.tables:
-                    return httpx.Response(400, json={"error": "table exists"})
-                self.tables[t["id"]] = {c["id"]: c["fields"] for c in t["columns"]}
-            return httpx.Response(200, json={"tables": [{"id": t["id"]} for t in body["tables"]]})
+                new = unique_id(t["id"], self.tables)
+                self.tables[new] = {}
+                for c in t["columns"]:
+                    self.tables[new][unique_id(c["id"], self.tables[new])] = c["fields"]
+                ids.append(new)
+            return httpx.Response(200, json={"tables": [{"id": i} for i in ids]})
         if m := re.fullmatch(r"tables/([^/]+)/columns", rest):
             table = self.tables.get(m[1])
             if table is None:
@@ -71,9 +84,10 @@ class FakeGrist:
             if method == "GET":
                 cols = [{"id": c, "fields": f} for c, f in table.items()]
                 return httpx.Response(200, json={"columns": cols})
+            ids = []
             for c in body["columns"]:
-                if c["id"] in table:
-                    return httpx.Response(400, json={"error": "column exists"})
-                table[c["id"]] = c["fields"]
-            return httpx.Response(200, json={"columns": [{"id": c["id"]} for c in body["columns"]]})
+                new = unique_id(c["id"], table)
+                table[new] = c["fields"]
+                ids.append(new)
+            return httpx.Response(200, json={"columns": [{"id": i} for i in ids]})
         return httpx.Response(404, json={"error": "not found"})

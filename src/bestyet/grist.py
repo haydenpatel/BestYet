@@ -137,13 +137,19 @@ class GristClient:
         """Apply UserActions, each a list such as `["AddTable", "T", [...]]`."""
         return self._doc("apply", method="POST", body=actions)
 
-    def add_tables(self, tables: list[dict]) -> None:
-        """Add tables given as `{"id": "T", "columns": [{"id": "C", "fields": {...}}]}`."""
-        self._doc("tables", method="POST", body={"tables": tables})
+    def add_tables(self, tables: list[dict]) -> list[str]:
+        """Add tables given as `{"id": "T", "columns": [{"id": "C", "fields": {...}}]}`.
 
-    def add_columns(self, table: str, columns: list[dict]) -> None:
-        """Add columns given as `{"id": "C", "fields": {...}}`."""
-        self._doc(f"tables/{_q(table)}/columns", method="POST", body={"columns": columns})
+        Returns the ids Grist assigned, which can differ from the requested ones.
+        """
+        result = self._doc("tables", method="POST", body={"tables": tables})
+        return [t["id"] for t in result["tables"]]
+
+    def add_columns(self, table: str, columns: list[dict]) -> list[str]:
+        """Add columns given as `{"id": "C", "fields": {...}}`. Returns the assigned ids."""
+        body = {"columns": columns}
+        result = self._doc(f"tables/{_q(table)}/columns", method="POST", body=body)
+        return [c["id"] for c in result["columns"]]
 
     # Organisations, workspaces and documents (init script).
 
