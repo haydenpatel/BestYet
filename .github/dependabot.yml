@@ -1,8 +1,9 @@
-# Dependabot: one grouped upgrade PR per ecosystem each month (minor and patch
-# versions), and grouped security fixes as they come. Major versions arrive as
-# their own PRs so each one can be reviewed for breaking changes. PRs are
-# labelled like the rest of the repo and merge like any other PR once `test`
-# passes.
+# Dependabot: one grouped upgrade PR per ecosystem each month, and grouped
+# security fixes as they come. Python major versions are left out of the
+# grouped PR and arrive as their own PRs, so each can be reviewed for breaking
+# changes. GitHub Actions majors stay in the grouped PR: they rarely need
+# changes and CI exercises them. PRs are labelled like the rest of the repo
+# and merge like any other PR once `test` passes.
 version: 2
 updates:
   - package-ecosystem: pip
