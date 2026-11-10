@@ -1,0 +1,24 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  # The "Protect main" ruleset requires a check named exactly `test`.
+  # Unit tests and lint only; Grist is mocked, integration tests are skipped.
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+      - run: pip install ruff pytest
+      - run: ruff check .
+      - run: ruff format --check .
+      - run: pytest
