@@ -16,6 +16,10 @@ Coming soon: set up a Grist document with the init script, then run the app.
     flask --app bestyet run --debug
     ruff check . && ruff format --check . && pytest
 
+## Configuration
+
+Set `GRIST_URL`, `GRIST_DOC_ID` and `GRIST_API_KEY` (required), and optionally `PORT` (default 8585) and `TZ` (default UTC), as environment variables. For development, copy `.env.example` to `.env`; real environment variables take precedence.
+
 ## Security
 
 BestYet has no login. **Do not expose it to the internet.** Run it on a private network behind your own access control. See [SECURITY.md](SECURITY.md).

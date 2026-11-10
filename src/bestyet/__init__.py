@@ -2,9 +2,13 @@
 
 from flask import Flask, render_template
 
+from bestyet.config import Config
 
-def create_app() -> Flask:
+
+def create_app(config: Config | None = None) -> Flask:
+    """Create the app. `/health` works without configuration."""
     app = Flask(__name__)
+    app.config["BESTYET"] = config
 
     @app.get("/health")
     def health():
