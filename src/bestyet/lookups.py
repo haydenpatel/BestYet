@@ -2,8 +2,8 @@
 
 Each table is loaded once and kept briefly in memory (the data is also edited
 directly in Grist). A name that is not found triggers one reload of that table
-before it counts as unknown, so a row just added resolves at once. Names match exactly (case-sensitive) after trimming
-surrounding whitespace.
+before it counts as unknown, so a row just added resolves at once. Names match exactly
+(case-sensitive) after trimming surrounding whitespace.
 """
 
 import time
