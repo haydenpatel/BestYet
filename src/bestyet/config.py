@@ -1,9 +1,11 @@
 """Configuration, read only from environment variables."""
 
 import os
-from collections.abc import Mapping
-from dataclasses import dataclass, field
+import re
+from collections.abc import Mapping, MutableMapping
+from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 DEFAULT_PORT = 8585
@@ -14,8 +16,30 @@ class ConfigError(ValueError):
     """Raised when configuration is missing or invalid. Names variables, never values."""
 
 
-def load_dotenv(path: str | Path = ".env", environ: dict | None = None) -> None:
-    """Load KEY=VALUE lines from a dev `.env` file. Never overrides existing variables."""
+class Secret:
+    """Holds a secret string. Prints masked; use `reveal()` to read it."""
+
+    __slots__ = ("_value",)
+
+    def __init__(self, value: str):
+        self._value = value
+
+    def reveal(self) -> str:
+        return self._value
+
+    def __repr__(self) -> str:
+        return "Secret('***')" if self._value else "Secret('')"
+
+    __str__ = __repr__
+
+
+def load_dotenv(path: str | Path = ".env", environ: MutableMapping[str, str] | None = None) -> None:
+    """Load KEY=VALUE lines from a dev `.env` file into `environ` (default: os.environ).
+
+    The path is relative to the current working directory. Supports an `export ` prefix,
+    quoted values, and ` #` comments after unquoted values. Variables that are already set
+    to a non-empty value are never overridden; empty ones count as unset.
+    """
     environ = os.environ if environ is None else environ
     try:
         lines = Path(path).read_text(encoding="utf-8").splitlines()
@@ -26,32 +50,36 @@ def load_dotenv(path: str | Path = ".env", environ: dict | None = None) -> None:
         if not line or line.startswith("#") or "=" not in line:
             continue
         key, _, value = line.partition("=")
+        key = key.strip().removeprefix("export ").strip()
         value = value.strip()
-        if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
-            value = value[1:-1]
-        environ.setdefault(key.strip(), value)
+        if value[:1] in ("'", '"') and value[0] in value[1:]:
+            value = value[1 : value.index(value[0], 1)]
+        else:
+            value = re.split(r"\s#", value, maxsplit=1)[0].strip()
+        if key and not environ.get(key):
+            environ[key] = value
+
+
+def _valid_url(url: str) -> bool:
+    try:
+        parts = urlsplit(url)
+        parts.port  # noqa: B018 - raises on an invalid port
+    except ValueError:
+        return False
+    return (
+        parts.scheme in ("http", "https")
+        and bool(parts.hostname)
+        and not (parts.query or parts.fragment)
+    )
 
 
 @dataclass(frozen=True)
 class Config:
     grist_url: str
     grist_doc_id: str
-    grist_api_key: str = field(repr=False)
+    grist_api_key: Secret
     port: int = DEFAULT_PORT
     tz: str = DEFAULT_TZ
-
-    @property
-    def masked_api_key(self) -> str:
-        return "***" if self.grist_api_key else ""
-
-    def __str__(self) -> str:
-        return repr(self)
-
-    def __repr__(self) -> str:
-        return (
-            f"Config(grist_url={self.grist_url!r}, grist_doc_id={self.grist_doc_id!r}, "
-            f"grist_api_key={self.masked_api_key!r}, port={self.port!r}, tz={self.tz!r})"
-        )
 
     @classmethod
     def from_env(cls, environ: Mapping[str, str] | None = None) -> "Config":
@@ -67,8 +95,8 @@ class Config:
         url = get("GRIST_URL").rstrip("/")
         if not url:
             problems.append("GRIST_URL is missing")
-        elif not url.startswith(("http://", "https://")):
-            problems.append("GRIST_URL must start with http:// or https://")
+        elif not _valid_url(url):
+            problems.append("GRIST_URL must be an http(s) URL with a host and no query or fragment")
 
         doc_id = get("GRIST_DOC_ID")
         if not doc_id:
@@ -79,12 +107,11 @@ class Config:
             problems.append("GRIST_API_KEY is missing")
 
         port = DEFAULT_PORT
-        if get("PORT"):
-            try:
-                port = int(get("PORT"))
-                if not 1 <= port <= 65535:
-                    raise ValueError
-            except ValueError:
+        raw_port = environ.get("PORT") or ""
+        if raw_port:
+            if raw_port.isascii() and raw_port.isdigit() and 1 <= int(raw_port) <= 65535:
+                port = int(raw_port)
+            else:
                 problems.append("PORT must be an integer from 1 to 65535")
 
         tz = get("TZ") or DEFAULT_TZ
@@ -95,4 +122,4 @@ class Config:
 
         if problems:
             raise ConfigError("Invalid configuration: " + "; ".join(problems))
-        return cls(url, doc_id, api_key, port, tz)
+        return cls(url, doc_id, Secret(api_key), port, tz)
