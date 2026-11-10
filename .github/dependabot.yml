@@ -1,9 +1,39 @@
+# Dependabot: one grouped upgrade PR per ecosystem each month (minor and patch
+# versions), and grouped security fixes as they come. Major versions arrive as
+# their own PRs so each one can be reviewed for breaking changes. PRs are
+# labelled like the rest of the repo and merge like any other PR once `test`
+# passes.
 version: 2
 updates:
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      python-version-updates:
+        applies-to: version-updates
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+      python-security-updates:
+        applies-to: security-updates
+        patterns: ["*"]
+    labels: ["chore", "priority: low"]
+    commit-message:
+      prefix: chore
+      include: scope
+
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: monthly
     groups:
-      actions:
+      actions-version-updates:
+        applies-to: version-updates
         patterns: ["*"]
+      actions-security-updates:
+        applies-to: security-updates
+        patterns: ["*"]
+    labels: ["chore", "priority: low"]
+    commit-message:
+      prefix: chore
+      include: scope

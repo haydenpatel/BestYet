@@ -22,3 +22,20 @@ jobs:
       - run: ruff check .
       - run: ruff format --check .
       - run: pytest
+
+  # The other supported Python versions (`requires-python` in pyproject.toml).
+  # Lint is version-independent, so only the tests run here.
+  python-compat:
+    name: test (python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12", "3.14"]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python }}
+      - run: pip install -e ".[dev]"
+      - run: pytest
