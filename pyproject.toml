@@ -17,7 +17,7 @@ bestyet-init = "bestyet.init_grist:main"
 
 [project.optional-dependencies]
 dev = [
-  "pytest>=8",
+  "pytest>=9.2.0",
   "ruff>=0.17.4",
 ]
 
