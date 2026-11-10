@@ -137,6 +137,14 @@ class GristClient:
         """Apply UserActions, each a list such as `["AddTable", "T", [...]]`."""
         return self._doc("apply", method="POST", body=actions)
 
+    def add_tables(self, tables: list[dict]) -> None:
+        """Add tables given as `{"id": "T", "columns": [{"id": "C", "fields": {...}}]}`."""
+        self._doc("tables", method="POST", body={"tables": tables})
+
+    def add_columns(self, table: str, columns: list[dict]) -> None:
+        """Add columns given as `{"id": "C", "fields": {...}}`."""
+        self._doc(f"tables/{_q(table)}/columns", method="POST", body={"columns": columns})
+
     # Organisations, workspaces and documents (init script).
 
     def orgs(self) -> list:

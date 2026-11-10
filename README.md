@@ -22,7 +22,16 @@ The goals for version 1 (see [Status and Limitations](#status-and-limitations) f
 
 ## Getting started
 
-Coming soon: set up a Grist document with the init script, then run the app.
+Set up a Grist document with the init script (`GRIST_URL` and `GRIST_API_KEY` set, see [Configuration](#configuration)):
+
+```
+bestyet-init --create --workspace "My Workspace" --name "BestYet"   # new document; prints its id
+bestyet-init                                                         # existing document in GRIST_DOC_ID
+```
+
+It only adds missing tables and plain columns, never changes anything that exists, and a second run does nothing. `--dry-run` shows the plan. A document with tables of its own is refused unless you pass `--allow-existing-tables`. Formula columns, the summary table and seed data are not set up yet.
+
+Then run the app.
 
 BestYet has no login: read [Privacy](#privacy) before you run it.
 
