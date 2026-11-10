@@ -10,6 +10,12 @@ Results end up scattered across spreadsheets and apps, and a personal best is ha
 
 Coming soon: set up a Grist document with the init script, then run the app.
 
+## Development
+
+    python3 -m venv .venv && . .venv/bin/activate && pip install -e ".[dev]"
+    flask --app bestyet run --debug
+    ruff check . && ruff format --check . && pytest
+
 ## Security
 
 BestYet has no login. **Do not expose it to the internet.** Run it on a private network behind your own access control. See [SECURITY.md](SECURITY.md).
