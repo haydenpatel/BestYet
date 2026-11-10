@@ -1,6 +1,6 @@
 # Athletics sidecar: specification
 
-A small, stateless mobile web app that fronts a self-hosted [Grist](https://www.getgrist.com/) document used to track athletics results. Grist is the only datastore and the desktop UI. This app is the quick phone view.
+A small, stateless mobile web app that fronts a [Grist](https://www.getgrist.com/) document used to track athletics results. Grist is the only datastore and the desktop UI. This app is the quick phone view.
 
 ## Goal
 

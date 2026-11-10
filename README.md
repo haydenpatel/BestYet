@@ -1,29 +1,75 @@
 # BestYet
 
-Mobile-friendly athletics results and personal best tracker, backed by a self-hosted [Grist](https://www.getgrist.com/) document. Not affiliated with Grist Labs.
+[![Python](https://img.shields.io/badge/Python-3776AB.svg?style=flat&logo=python&logoColor=white)](https://www.python.org/)
+[![Flask](https://img.shields.io/badge/Flask-000000.svg?style=flat&logo=flask&logoColor=white)](https://flask.palletsprojects.com/)
 
-Results end up scattered across spreadsheets and apps, and a personal best is hard to find on a phone. BestYet is a small web app that gives a quick phone view of a Grist document: see each athlete's PBs, add a meet, and enter results from inside it.
+Results end up scattered across spreadsheets and apps, and a personal best is hard to find on a phone. **BestYet** is a small mobile web app that gives a quick phone view of an athletics results document in [Grist](https://www.getgrist.com/): see each athlete's personal bests, add a meet, and enter results from inside it.
 
-> **Work in progress.** See [SPEC.md](SPEC.md) for what is being built.
+Not affiliated with Grist Labs.
+
+> **Early development.** BestYet is not usable yet. See [Status and Limitations](#status-and-limitations).
+
+## Features
+
+The goals for version 1 (see [Status and Limitations](#status-and-limitations) for what works today):
+
+- Personal bests per athlete, grouped as sprints, jumps and throws
+- Meets, newest first, with their results
+- Add a result from inside a meet: the meet is already chosen, and the last athlete is remembered
+- Mobile first: big tap targets and a numeric keypad for marks
+- Grist holds all the data and the rules (PB logic, defaults), so the phone and the desktop view always agree
+- No database of its own: BestYet is stateless
 
 ## Getting started
 
 Coming soon: set up a Grist document with the init script, then run the app.
 
-## Development
-
-    python3 -m venv .venv && . .venv/bin/activate && pip install -e ".[dev]"
-    flask --app bestyet run --debug
-    ruff check . && ruff format --check . && pytest
+BestYet has no login: read [Privacy](#privacy) before you run it.
 
 ## Configuration
 
-Set `GRIST_URL`, `GRIST_DOC_ID` and `GRIST_API_KEY` (required), and optionally `PORT` (default 8585) and `TZ` (default UTC), as environment variables. For development, copy `.env.example` to `.env`; real environment variables take precedence.
+Set these as environment variables:
 
-## Security
+| Variable | Purpose | Default |
+|---|---|---|
+| `GRIST_URL` | Base URL of the Grist server | required |
+| `GRIST_DOC_ID` | Id of the Grist document | required |
+| `GRIST_API_KEY` | API key for the Grist user BestYet acts as | required |
+| `PORT` | Port to listen on | `8585` |
+| `TZ` | Time zone, used for "today" | `UTC` |
 
-BestYet has no login. **Do not expose it to the internet.** Run it on a private network behind your own access control. See [SECURITY.md](SECURITY.md).
+For development, copy `.env.example` to `.env`; real environment variables take precedence.
 
-## Licence
+## Privacy
 
-[MIT](LICENSE)
+BestYet has no login: anyone who can reach it can read and change the results in the connected document. **Do not expose it to the internet.** Run it on a private network, behind your own access control. See [SECURITY.md](SECURITY.md).
+
+- The Grist API key stays on the server. It is never sent to the browser or written to logs.
+- BestYet stores nothing itself. Planned: remembering your last-used athlete in this browser's `localStorage`.
+
+## Tech Stack
+
+- Python and Flask
+- Jinja templates (HTMX planned)
+- httpx
+- pytest and ruff
+
+## Development
+
+Assuming your environment is already configured:
+
+```bash
+python3 -m venv .venv && . .venv/bin/activate && pip install -e ".[dev]"
+flask --app bestyet run --debug
+ruff check . && ruff format --check . && pytest
+```
+
+Enable the git hooks once per clone with `git config core.hooksPath .githooks`. They refuse commits and merges on `main`: work on a branch and open a pull request. See [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## Status and Limitations
+
+BestYet is in early development and does not do anything useful yet. It works with Grist's REST API, so it is tied to the document layout described in [SPEC.md](SPEC.md).
+
+## License
+
+MIT
