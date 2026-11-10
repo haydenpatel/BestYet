@@ -1,0 +1,16 @@
+#!/bin/sh
+# Local guards. Enable once per clone: git config core.hooksPath .githooks
+
+# Work happens on branches and reaches main only through a squash-merged PR.
+branch=$(git symbolic-ref --short -q HEAD)
+if [ "$branch" = "main" ]; then
+  echo "pre-commit: refusing to commit on main. Create a branch first." >&2
+  exit 1
+fi
+
+# Secret scan of staged changes (https://github.com/betterleaks/betterleaks).
+if command -v betterleaks >/dev/null 2>&1; then
+  betterleaks git --pre-commit --staged --no-banner || exit 1
+else
+  echo "pre-commit: betterleaks not installed, skipping secret scan (brew install betterleaks)." >&2
+fi
