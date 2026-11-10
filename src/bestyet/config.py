@@ -82,8 +82,14 @@ class Config:
     tz: str = DEFAULT_TZ
 
     @classmethod
-    def from_env(cls, environ: Mapping[str, str] | None = None) -> "Config":
-        """Build a Config. With no mapping, loads a dev `.env` and reads os.environ."""
+    def from_env(
+        cls, environ: Mapping[str, str] | None = None, *, require_doc_id: bool = True
+    ) -> "Config":
+        """Build a Config. With no mapping, loads a dev `.env` and reads os.environ.
+
+        The init script passes `require_doc_id=False` when it creates the document itself;
+        `grist_doc_id` is then an empty string if unset.
+        """
         if environ is None:
             load_dotenv()
             environ = os.environ
@@ -99,7 +105,7 @@ class Config:
             problems.append("GRIST_URL must be an http(s) URL with a host and no query or fragment")
 
         doc_id = get("GRIST_DOC_ID")
-        if not doc_id:
+        if require_doc_id and not doc_id:
             problems.append("GRIST_DOC_ID is missing")
 
         api_key = get("GRIST_API_KEY")

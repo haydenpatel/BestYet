@@ -22,7 +22,22 @@ The goals for version 1 (see [Status and Limitations](#status-and-limitations) f
 
 ## Getting started
 
-Coming soon: set up a Grist document with the init script, then run the app.
+Set up a Grist document with the init script (`GRIST_URL` and `GRIST_API_KEY` set, see [Configuration](#configuration)):
+
+```
+bestyet-init --create --workspace "My Workspace" --name "BestYet"   # new document; prints its id
+bestyet-init                                                         # existing document in GRIST_DOC_ID
+```
+
+It prints the whole plan, then asks `Apply these changes? [y/N]` before changing anything; `--yes` skips the prompt (required without a terminal), `--dry-run` only shows the plan. It only adds missing tables and plain columns, and a second run does nothing. With `--create` it also removes the empty `Table1` that Grist puts in every new document, but only if that table is untouched. A document with tables of its own is refused unless you pass `--allow-existing-tables`; this includes a blank document made in the Grist UI (it has an empty `Table1`), so use `--create` instead. Formula columns, the summary table and seed data are not set up yet.
+
+Once the project's container image exists (a later milestone), the same command can run as a one-off in it, with the settings passed as environment variables and nothing written to disk:
+
+```
+docker run --rm -e GRIST_URL -e GRIST_API_KEY <your-bestyet-image> bestyet-init --create --workspace Home --yes
+```
+
+Then run the app.
 
 BestYet has no login: read [Privacy](#privacy) before you run it.
 

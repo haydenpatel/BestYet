@@ -158,3 +158,10 @@ def test_secret_masks_and_reveals():
     secret = Secret(KEY)
     assert KEY not in repr(secret) and KEY not in str(secret)
     assert secret.reveal() == KEY
+
+
+def test_doc_id_optional_when_not_required():
+    cfg = Config.from_env(env(GRIST_DOC_ID=None), require_doc_id=False)
+    assert cfg.grist_doc_id == ""
+    with pytest.raises(ConfigError, match="GRIST_DOC_ID is missing"):
+        Config.from_env(env(GRIST_DOC_ID=None))
