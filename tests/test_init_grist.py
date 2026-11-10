@@ -27,8 +27,8 @@ CREATE = ("--create", "--workspace", "Work")
 
 
 def run(fake, *argv, env=ENV, yes=True):
-    """Run the CLI. Adds --yes (the prompt has its own tests) unless it is a dry run."""
-    if yes and "--dry-run" not in argv:
+    """Run the CLI. Adds --yes (the prompt has its own tests) unless yes=False."""
+    if yes:
         argv += ("--yes",)
     return main(list(argv), env, fake.transport)
 
@@ -125,7 +125,7 @@ def test_summary_table_alone_is_not_unrelated():
 
 def test_dry_run_changes_nothing(capsys):
     fake = FakeGrist()
-    assert run(fake, "--dry-run") == 0
+    assert run(fake, "--dry-run", yes=False) == 0
     assert fake.writes == []
     out = capsys.readouterr().out
     assert "create table Athletes" in out and "plan:" in out
@@ -146,7 +146,7 @@ def test_create_workspace_by_name_and_custom_name():
 
 def test_create_dry_run_creates_nothing(capsys):
     fake = FakeGrist()
-    assert run(fake, "--create", "--workspace", "Work", "--dry-run") == 0
+    assert run(fake, "--create", "--workspace", "Work", "--dry-run", yes=False) == 0
     assert fake.created_docs == [] and fake.writes == []
     assert "create document" in capsys.readouterr().out
 
@@ -212,7 +212,7 @@ def test_unexpected_error_is_one_line(capsys):
 def test_key_never_in_output(capsys):
     fake = FakeGrist({"Notes": {}})
     run(fake)
-    run(fake, "--allow-existing-tables", "--dry-run")
+    run(fake, "--allow-existing-tables", "--dry-run", yes=False)
     run(fake, "--allow-existing-tables")
     captured = capsys.readouterr()
     assert KEY not in captured.out + captured.err
@@ -347,10 +347,21 @@ def test_default_table_kept_with_warning_when_a_condition_fails(
     assert out.count(warning) == 2  # when found, and again in the summary
     summary = out[out.index("not handled by this script yet") :]
     assert warning in summary and "--allow-existing-tables" in summary
-    assert "remove it in Grist" in summary
+    assert "remove Table1 in Grist" in summary
 
 
-def test_default_table_rechecked_right_before_removal(capsys):
+@pytest.mark.parametrize(
+    ("change", "reason"),
+    [
+        (lambda f: f.rows.update(Table1=[{"id": 1}]), "it has rows"),
+        (lambda f: f.tables.update(Notes={}), "the document has other tables (Notes)"),
+        (
+            lambda f: f.tables["Table1"].update(Name={"type": "Text"}),
+            "it has columns other than A, B, C (Name)",
+        ),
+    ],
+)
+def test_default_table_fully_rechecked_right_before_removal(capsys, change, reason):
     fake = FakeGrist()
     orig = fake.handle
     calls = []
@@ -359,13 +370,85 @@ def test_default_table_rechecked_right_before_removal(capsys):
         if request.method == "GET" and request.url.path.endswith("/NEWDOC/tables"):
             calls.append(1)
             if len(calls) == 2:  # between the first check and the removal
-                fake.rows["Table1"] = [{"id": 1}]
+                change(fake)
         return orig(request)
 
     fake.transport = httpx.MockTransport(handle)
     assert run(fake, *CREATE, env=ENV_NO_DOC) == 0
     assert "Table1" in fake.tables and fake.actions == []
-    assert "Table1 not removed: it has rows" in capsys.readouterr().out
+    assert f"Table1 not removed: {reason}" in capsys.readouterr().out
+
+
+def test_remove_table_failure_reports_id_and_hint(capsys):
+    fake = FakeGrist()
+    fake.fail_on = "POST /api/docs/NEWDOC/apply"
+    assert run(fake, *CREATE, env=ENV_NO_DOC) == 1
+    err = capsys.readouterr().err
+    assert "NEWDOC" in err and "GRIST_DOC_ID=NEWDOC" in err
+    assert "--allow-existing-tables" in err and err.count("\n") == 1
+    assert "Table1" in fake.tables
+
+
+def test_next_step_depends_on_the_allow_flag(capsys):
+    fake = FakeGrist({"Table1": DEFAULTS})
+    assert run(fake, "--allow-existing-tables") == 0
+    summary = capsys.readouterr().out.split("not handled by this script yet")[1]
+    assert "next step: remove Table1 in Grist" in summary
+    assert "--allow-existing-tables" not in summary
+    fake = FakeGrist(new_doc_tables={"Table1": DEFAULTS, "Notes": {}})
+    assert run(fake, *CREATE, env=ENV_NO_DOC) == 0
+    assert "--allow-existing-tables on re-runs" in capsys.readouterr().out
+
+
+def test_interrupt_at_the_prompt(monkeypatch, capsys):
+    class Interrupting(Stdin):
+        def readline(self, *a):
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr(sys, "stdin", Interrupting())
+    fake = FakeGrist()
+    assert run(fake, *CREATE, env=ENV_NO_DOC, yes=False) == 130
+    captured = capsys.readouterr()
+    assert captured.err == "error: aborted; nothing was changed\n"
+    assert fake.created_docs == [] and fake.writes == []
+
+
+def test_interrupt_during_apply(capsys):
+    fake = FakeGrist()
+    orig = fake.handle
+
+    def handle(request):
+        if request.method == "POST" and request.url.path.endswith("/tables"):
+            raise KeyboardInterrupt
+        return orig(request)
+
+    fake.transport = httpx.MockTransport(handle)
+    assert run(fake, *CREATE, env=ENV_NO_DOC) == 130
+    err = capsys.readouterr().err
+    assert err.startswith("error: aborted.") and "GRIST_DOC_ID=NEWDOC" in err
+    assert err.count("\n") == 1 and "Traceback" not in err
+
+    fake = FakeGrist()
+    orig = fake.handle
+    fake.transport = httpx.MockTransport(handle)
+    assert run(fake) == 130
+    assert capsys.readouterr().err == "error: aborted; re-run to add what is still missing\n"
+
+
+def test_eof_at_the_prompt_ends_the_line(monkeypatch, capsys):
+    monkeypatch.setattr(sys, "stdin", Stdin(""))
+    assert run(FakeGrist(), yes=False) == 0
+    assert "[y/N] \nnot applied" in capsys.readouterr().out
+
+
+def test_dry_run_wins_over_yes(monkeypatch, capsys):
+    monkeypatch.setattr(sys, "stdin", Stdin("", tty=False))
+    fake = FakeGrist()
+    assert run(fake, "--yes", "--dry-run", yes=False) == 0
+    assert run(fake, *CREATE, "-y", "--dry-run", env=ENV_NO_DOC, yes=False) == 0
+    out = capsys.readouterr().out
+    assert "plan:" in out and "Apply these changes" not in out and "done:" not in out
+    assert fake.writes == [] and fake.created_docs == []
 
 
 def test_existing_document_keeps_default_table_and_warns(capsys):

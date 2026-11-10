@@ -220,7 +220,23 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
 
 DEFAULT_TABLE = "Table1"  # Grist puts an empty table with columns A, B, C in every new document
 DEFAULT_COLUMNS = frozenset({"A", "B", "C"})
-DEFAULT_TABLE_NEXT_STEP = "remove it in Grist, or pass --allow-existing-tables on re-runs"
+
+
+class Interrupted(Exception):
+    """The run was interrupted (Ctrl-C); the message is safe to print as is."""
+
+
+def next_step(allow_existing: bool) -> str:
+    if allow_existing:
+        return f"remove {DEFAULT_TABLE} in Grist"
+    return f"remove {DEFAULT_TABLE} in Grist, or pass --allow-existing-tables on re-runs"
+
+
+def rerun_hint(doc_id: str) -> str:
+    return (
+        f"Document {doc_id} was created; re-run without --create using GRIST_DOC_ID={doc_id} "
+        f"(add --allow-existing-tables if {DEFAULT_TABLE} is still there)"
+    )
 
 
 def default_table_state(client: GristClient) -> tuple[bool, str | None]:
@@ -305,12 +321,11 @@ def run(
                 print(f"done: removed Grist's default table {DEFAULT_TABLE}", file=out)
             if warning:
                 print(f"warning: {warning}", file=out)
-            _apply(plan, client, [warning] if warning else [], out)
+            _apply(plan, client, [warning] if warning else [], args, out)
     except (GristError, InitError) as e:
-        raise InitError(
-            f"{e}. Document {doc_id} was created; re-run without --create "
-            f"using GRIST_DOC_ID={doc_id}"
-        ) from None
+        raise InitError(f"{e}. {rerun_hint(doc_id)}") from None
+    except KeyboardInterrupt:
+        raise Interrupted(f"aborted. {rerun_hint(doc_id)}") from None
 
 
 def _set_up_existing(client: GristClient, args: argparse.Namespace, out) -> None:
@@ -338,9 +353,12 @@ def _set_up_existing(client: GristClient, args: argparse.Namespace, out) -> None
     for w in warnings:
         print(f"warning: {w}", file=out)
     if not _show_plan(plan, [], args, out) or args.dry_run or not _confirm(args, out):
-        _finish(plan, warnings, out)
+        _finish(plan, warnings, args, out)
         return
-    _apply(plan, client, warnings, out)
+    try:
+        _apply(plan, client, warnings, args, out)
+    except KeyboardInterrupt:
+        raise Interrupted("aborted; re-run to add what is still missing") from None
 
 
 def _show_plan(plan: Plan, lead: Sequence[str], args: argparse.Namespace, out) -> bool:
@@ -368,23 +386,32 @@ def _confirm(args: argparse.Namespace, out) -> bool:
         raise InitError("not interactive; pass --yes to run non-interactively")
     out.write("Apply these changes? [y/N] ")
     out.flush()
-    if sys.stdin.readline().strip().lower() in ("y", "yes"):
+    try:
+        answer = sys.stdin.readline()
+    except KeyboardInterrupt:
+        print(file=out)
+        raise Interrupted("aborted; nothing was changed") from None
+    if not answer:
+        print(file=out)  # EOF: end the prompt line
+    if answer.strip().lower() in ("y", "yes"):
         return True
     print("not applied: nothing was changed", file=out)
     return False
 
 
-def _apply(plan: Plan, client: GristClient, warnings: Sequence[str], out) -> None:
+def _apply(
+    plan: Plan, client: GristClient, warnings: Sequence[str], args: argparse.Namespace, out
+) -> None:
     for step in plan.steps:
         step.apply(client)
         print(f"done: {step.describe()}", file=out)
-    _finish(plan, warnings, out)
+    _finish(plan, warnings, args, out)
 
 
-def _finish(plan: Plan, warnings: Sequence[str], out) -> None:
+def _finish(plan: Plan, warnings: Sequence[str], args: argparse.Namespace, out) -> None:
     print(f"not handled by this script yet: {', '.join(DEFERRED)}", file=out)
     for w in warnings:
-        print(f"warning: {w}; next step: {DEFAULT_TABLE_NEXT_STEP}", file=out)
+        print(f"warning: {w}; next step: {next_step(args.allow_existing_tables)}", file=out)
     if plan.conflicts:
         raise InitError("document differs from the contract; fix it in Grist")
 
@@ -398,6 +425,12 @@ def main(
     try:
         config = Config.from_env(environ, require_doc_id=not args.create)
         run(args, config, sys.stdout, transport)
+    except Interrupted as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 130
+    except KeyboardInterrupt:
+        print("error: aborted", file=sys.stderr)
+        return 130
     except (ConfigError, InitError, GristError) as e:
         print(f"error: {e}", file=sys.stderr)
         return 1
