@@ -100,7 +100,8 @@ def test_summary_spec():
     assert s.id == "Results_summary_Athlete_Event_Implement"
     assert s.group_by == ("Athlete", "Event", "Implement")
     assert set(s.group_by) <= set(schema.required_columns(s.source_table))
-    assert schema.SUMMARY_REQUIRED_COLUMNS == ("count", "Best")
+    assert schema.SUMMARY_REQUIRED_COLUMNS == ("count", *(c.id for c in s.columns))
+    assert "Best" in schema.SUMMARY_REQUIRED_COLUMNS
 
 
 def test_events_seed():

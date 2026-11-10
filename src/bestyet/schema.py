@@ -21,9 +21,11 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class Column:
+    """One column. ``recalc_deps`` holds column ids; Grist's column API stores column
+    refs, so the init script must map ids to refs when it sends ``recalcDeps``."""
+
     id: str
     type: str  # Grist type: Text, Choice, Date, Int, Numeric, Bool or Ref:<Table>
-    label: str | None = None
     choices: tuple[str, ...] | None = None  # None: choices are deployment data
     ref_table: str | None = None
     formula: str | None = None
@@ -155,7 +157,7 @@ SUMMARY = Summary(
     columns=(Column("Best", "Numeric", formula=BEST_FORMULA, is_formula=True),),
 )
 # Grist adds ``count`` (Int) to every summary table; the contract requires it.
-SUMMARY_REQUIRED_COLUMNS = ("count", "Best")
+SUMMARY_REQUIRED_COLUMNS = ("count", *(c.id for c in SUMMARY.columns))
 
 # Results columns the app may write. Grade and Implement are normally left out
 # of the payload so their trigger formulas fill them in.
