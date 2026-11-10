@@ -32,7 +32,7 @@ Let a parent or coach, from a phone:
 | `GRIST_DOC_ID` | Id of the Grist document | No |
 | `GRIST_API_KEY` | API key for the Grist user the app acts as | Yes |
 | `PORT` | Port the app listens on | No |
-| `TZ` | Time zone used when displaying dates | No |
+| `TZ` | Time zone used to work out today's date (default for a new meet) | No |
 
 `GRIST_URL` must be overridable per environment (for example a public URL in development and an internal service URL in production). Nothing may be hardcoded. Ship a `.env.example` with placeholders only, and gitignore `.env`.
 
@@ -127,7 +127,7 @@ return min(vals) if $Event.Kind == "Time" else max(vals)
 - Records: `GET /api/docs/{doc}/tables/{table}/records` (optional `filter` JSON and `sort`), `POST .../records` with `{"records":[{"fields":{...}}]}`, `PATCH .../records` with `{"records":[{"id":N,"fields":{...}}]}`, and `POST .../data/delete` with a JSON array of ids.
 - SQL (SELECT only): `POST /api/docs/{doc}/sql` with `{"sql":"...","args":[...]}`.
 - Ref columns are numeric row ids in both directions. Resolve names to ids by loading Athletes, Events and Meets per request, or cache briefly in memory with a short TTL (data is edited directly in Grist too).
-- Date columns are Unix seconds at UTC midnight (for example 1 Nov 2026 is `1793491200`). Convert for display in the configured time zone, but store UTC midnight so it matches what Grist writes.
+- Date columns are Unix seconds at UTC midnight (for example 1 Nov 2026 is `1793491200`). Convert with no time zone applied, so the date entered is the date stored and shown; the configured time zone is only used to work out today's date.
 - Verify behaviour against the running Grist version rather than assuming newer endpoints.
 
 ## Screens (mobile first, thumb friendly)
