@@ -60,16 +60,19 @@ def test_from_grist_invalid_is_none(value):
 
 def test_today_uses_the_named_zone():
     for tz in ODD_ZONES:
-        a, b = dates.today(tz), dates.today("UTC")
-        assert abs((a - b).days) <= 1
-    assert dates.today("Pacific/Kiritimati") >= dates.today("Pacific/Pago_Pago")
+        assert abs((dates.today(tz) - datetime.now(UTC).date()).days) <= 1
+    # Always 24 hours apart, so never the same date and never more than two days.
+    gap = dates.today("Pacific/Kiritimati") - dates.today("Pacific/Pago_Pago")
+    assert 1 <= gap.days <= 2
 
 
 def test_today_ignores_process_zone(monkeypatch):
     monkeypatch.setenv("TZ", "Pacific/Kiritimati")
     time.tzset()
     try:
-        assert dates.today("UTC") == datetime.now(UTC).date()
+        before = datetime.now(UTC).date()
+        result = dates.today("UTC")
+        assert before <= result <= datetime.now(UTC).date()
     finally:
         monkeypatch.undo()
         time.tzset()

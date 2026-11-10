@@ -1,7 +1,8 @@
 """Resolve Athlete, Event and Meet names to Grist row ids, and back.
 
 Each table is loaded once and kept briefly in memory (the data is also edited
-directly in Grist). Names match exactly (case-sensitive) after trimming
+directly in Grist). A name that is not found triggers one reload of that table
+before it counts as unknown, so a row just added resolves at once. Names match exactly (case-sensitive) after trimming
 surrounding whitespace.
 """
 
@@ -37,26 +38,31 @@ class Lookups:
     def invalidate(self) -> None:
         self._cache.clear()
 
-    def _load(self, table: str):
+    def _load(self, table: str, *, force: bool = False):
         entry = self._cache.get(table)
-        if entry and self._clock() - entry[0] < self._ttl:
+        if entry and not force and self._clock() - entry[0] < self._ttl:
             return entry
         names: dict[int, str] = {}
         ids: dict[str, list[int]] = {}
         for record in self._client.records(table):
             name = record["fields"].get("Name")
             if isinstance(name, str) and name.strip():
+                name = name.strip()
                 names[record["id"]] = name
-                ids.setdefault(name.strip(), []).append(record["id"])
+                ids.setdefault(name, []).append(record["id"])
         entry = self._cache[table] = (self._clock(), names, ids)
         return entry
 
     def _id(self, table: str, label: str, name: str) -> int:
-        matches = self._load(table)[2].get(name.strip(), [])
+        name = name.strip()
+        loaded = table in self._cache and self._clock() - self._cache[table][0] < self._ttl
+        matches = self._load(table)[2].get(name, [])
+        if not matches and loaded:
+            matches = self._load(table, force=True)[2].get(name, [])
         if not matches:
-            raise LookupFailed(f"No {label} named {name.strip()!r}")
+            raise LookupFailed(f"No {label} named {name!r}")
         if len(matches) > 1:
-            raise LookupFailed(f"More than one {label} is named {name.strip()!r}")
+            raise LookupFailed(f"More than one {label} is named {name!r}")
         return matches[0]
 
     def athlete_id(self, name: str) -> int:
