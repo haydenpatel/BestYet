@@ -11,14 +11,14 @@ KEY = "test-key-0123456789"
 BASE = "https://grist.example.test"
 
 
-def make(handler, base=BASE):
+def make(handler, base=BASE, doc_id="DOC1"):
     calls = []
 
     def wrapped(request):
         calls.append(request)
         return handler(request)
 
-    client = GristClient(base, "DOC1", Secret(KEY), transport=httpx.MockTransport(wrapped))
+    client = GristClient(base, doc_id, Secret(KEY), transport=httpx.MockTransport(wrapped))
     return client, calls
 
 
@@ -180,3 +180,35 @@ def test_repr_and_str_hide_key():
     client, _ = make(reply({}))
     assert KEY not in repr(client) and KEY not in str(client)
     assert "grist.example.test" in repr(client)
+
+
+@pytest.mark.parametrize("status", [301, 302])
+def test_redirect_is_a_grist_error(status):
+    def handler(request):
+        return httpx.Response(status, headers={"Location": "https://grist.example.test/api/x"})
+
+    err = failing(make(handler)[0])
+    assert err.status == status
+    assert "Unexpected redirect" in err.message
+
+
+def test_ids_are_quoted_in_paths():
+    client, calls = make(lambda r: httpx.Response(200), doc_id="D/1 x")
+    client.delete("a/b c?#", [1])
+    client.workspaces("o/1")
+    client.create_doc("w 2", "n")
+    assert [c.url.raw_path for c in calls] == [
+        b"/api/docs/D%2F1%20x/tables/a%2Fb%20c%3F%23/data/delete",
+        b"/api/orgs/o%2F1/workspaces",
+        b"/api/workspaces/w%202/docs",
+    ]
+
+
+def test_repr_shows_only_scheme_host_port():
+    client = GristClient(
+        "https://" + "user" + ":" + "pw" + "@grist.example.test:8484/path?q=1",
+        "DOC1",
+        Secret(KEY),
+        transport=httpx.MockTransport(reply({})),
+    )
+    assert repr(client) == "GristClient(base_url='https://grist.example.test:8484', doc_id='DOC1')"
