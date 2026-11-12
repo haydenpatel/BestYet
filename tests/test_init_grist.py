@@ -6,7 +6,7 @@ import httpx
 import pytest
 from fake_grist import BASE, DOC, KEY, FakeGrist
 
-from bestyet import schema
+from bestyet import dates, marks, schema
 from bestyet.config import Config
 from bestyet.grist import GristClient
 from bestyet.init_grist import build_plan, column_payload, main
@@ -93,7 +93,7 @@ def test_fresh_doc_gets_the_whole_contract(capsys):
     assert fake.tables["Results"]["Athlete"]["type"] == "Ref:Athletes"
     assert fake.tables["Meets"]["Date"] == {"type": "Date"}
     out = capsys.readouterr().out
-    assert "not handled by this script yet: demo data" in out
+    assert "demo data" not in out
     assert "seed rows" not in out
 
 
@@ -603,7 +603,7 @@ def test_default_table_kept_with_warning_when_a_condition_fails(
     assert "Athletes" in fake.tables
     warning = f"warning: Table1 not removed: {reason}"
     assert out.count(warning) == 2  # when found, and again in the summary
-    summary = out[out.index("not handled by this script yet") :]
+    summary = out[out.rindex("warning: Table1") :]
     assert warning in summary and "--allow-existing-tables" in summary
     assert "remove Table1 in Grist" in summary
 
@@ -650,7 +650,8 @@ def test_remove_table_failure_reports_id_and_hint(capsys):
 def test_next_step_depends_on_the_allow_flag(capsys):
     fake = FakeGrist({"Table1": DEFAULTS})
     assert run(fake, "--allow-existing-tables") == 0
-    summary = capsys.readouterr().out.split("not handled by this script yet")[1]
+    out = capsys.readouterr().out
+    summary = out[out.rindex("warning: Table1") :]
     assert "next step: remove Table1 in Grist" in summary
     assert "--allow-existing-tables" not in summary
     fake = FakeGrist(new_doc_tables={"Table1": DEFAULTS, "Notes": {}})
@@ -842,3 +843,148 @@ def test_failed_trigger_update_names_the_columns(capsys):
     assert run(fake) == 1
     err = capsys.readouterr().err
     assert "Results.Grade, Results.Implement" in err and "re-run leaves" in err
+
+
+# --demo-data
+
+
+def demo_rows(fake):
+    """Results as (athlete, event, meet, mark) names, read back through the ids."""
+    by = {t: {r["id"]: r["fields"] for r in fake.rows[t]} for t in ("Athletes", "Events", "Meets")}
+    return [
+        (
+            by["Athletes"][r["fields"]["Athlete"]]["Name"],
+            by["Events"][r["fields"]["Event"]]["Name"],
+            by["Meets"][r["fields"]["Meet"]]["Name"],
+            r["fields"]["Mark"],
+        )
+        for r in fake.rows["Results"]
+    ]
+
+
+def test_demo_data_is_obviously_fake_and_valid():
+    names = {n for n, _ in schema.DEMO_ATHLETES}
+    assert all(n.startswith("Athlete ") for n in names)
+    assert all(m[0].startswith("Demo ") for m in schema.DEMO_MEETS)
+    events = {n for n, _ in schema.EXAMPLE_EVENTS}
+    meets = {m[0] for m in schema.DEMO_MEETS}
+    for athlete, event, meet, mark, _ in schema.DEMO_RESULTS:
+        assert athlete in names and event in events and meet in meets
+        assert marks.parse_mark(mark).ok
+    for _, iso, _ in schema.DEMO_MEETS:
+        assert dates.parse_iso(iso)
+    # A personal best to show, and a throwing event with an implement.
+    keys = [(a, e) for a, e, *_ in schema.DEMO_RESULTS]
+    assert any(keys.count(k) > 1 for k in keys)
+    implemented = {
+        e for e, g, _ in schema.EXAMPLE_IMPLEMENTS for a, ag in schema.DEMO_ATHLETES if g == ag
+    }
+    assert any(e in implemented for _, e, *_ in schema.DEMO_RESULTS)
+
+
+def test_demo_data_on_fresh_doc(capsys):
+    fake = FakeGrist()
+    assert run(fake, "--demo-data") == 0
+    assert [a["fields"] for a in fake.rows["Athletes"]] == [
+        {"Name": n, "Grade": g} for n, g in schema.DEMO_ATHLETES
+    ]
+    assert [m["fields"]["Name"] for m in fake.rows["Meets"]] == [m[0] for m in schema.DEMO_MEETS]
+    assert demo_rows(fake) == [(a, e, m, k) for a, e, m, k, _ in schema.DEMO_RESULTS]
+    assert len(fake.rows["Implements"]) == len(schema.EXAMPLE_IMPLEMENTS)  # seeded as needed
+    assert len(fake.rows["Events"]) == len(schema.EXAMPLE_EVENTS)
+    out = capsys.readouterr().out
+    assert out.index("add example Events") < out.index("add demo data")
+
+
+def test_demo_results_leave_computed_columns_to_grist():
+    fake = FakeGrist()
+    assert run(fake, "--demo-data") == 0
+    for r in fake.rows["Results"]:
+        assert set(r["fields"]) == {"Athlete", "Event", "Meet", "Mark", "Place"}
+
+
+def test_demo_data_on_existing_empty_doc_reuses_seeded_events():
+    fake = full_fake()
+    before = json.dumps(fake.rows["Events"])
+    assert run(fake, "--demo-data") == 0
+    assert json.dumps(fake.rows["Events"]) == before  # none duplicated
+    assert len(fake.rows["Results"]) == len(schema.DEMO_RESULTS)
+
+
+def test_demo_data_matches_events_ignoring_case_and_spaces():
+    fake = full_fake()
+    for r in fake.rows["Events"]:
+        r["fields"]["Name"] = f" {r['fields']['Name'].upper()} "
+    assert run(fake, "--demo-data") == 0
+    assert len(fake.rows["Events"]) == len(schema.EXAMPLE_EVENTS)
+    assert len(fake.rows["Results"]) == len(schema.DEMO_RESULTS)
+
+
+@pytest.mark.parametrize("table", ["Athletes", "Meets", "Results"])
+def test_demo_data_refuses_when_a_table_has_rows(capsys, table):
+    fake = full_fake()
+    fake.rows[table] = [{"id": 1, "fields": {}}]
+    assert run(fake, "--demo-data") == 1
+    err = capsys.readouterr().err
+    assert table in err and "Nothing was changed" in err
+    assert fake.writes == []
+
+
+def test_demo_data_refuses_even_when_other_parts_are_missing(capsys):
+    fake = full_fake()
+    del fake.tables["Meets"]["Location"]
+    fake.rows["Athletes"] = [{"id": 1, "fields": {"Name": "Real"}}]
+    assert run(fake, "--demo-data") == 1
+    assert fake.writes == []
+
+
+def test_demo_data_twice_refuses_second_time(capsys):
+    fake = FakeGrist()
+    assert run(fake, "--demo-data") == 0
+    fake.writes.clear()
+    assert run(fake, "--demo-data") == 1
+    assert fake.writes == []
+    assert run(fake) == 0  # without the flag it is a plain no-op
+    assert fake.writes == []
+
+
+def test_demo_data_dry_run_and_prompt_write_nothing(monkeypatch, capsys):
+    fake = full_fake()
+    assert run(fake, "--demo-data", "--dry-run") == 0
+    assert "add demo data" in capsys.readouterr().out and fake.writes == []
+    monkeypatch.setattr(sys, "stdin", Stdin("n\n"))
+    assert run(fake, "--demo-data", yes=False) == 0
+    assert fake.writes == []
+
+
+def test_demo_data_rechecked_when_applied(capsys):
+    """Rows added between the plan and the apply stop the load."""
+    fake = full_fake()
+    seen = []
+    orig = fake.handle
+
+    def handle(request):
+        if request.method == "GET" and request.url.path.endswith("/tables/Results/records"):
+            seen.append(1)
+            if len(seen) == 2:  # second read: the apply-time check
+                fake.rows["Results"] = [{"id": 1, "fields": {}}]
+        return orig(request)
+
+    fake.transport = httpx.MockTransport(handle)
+    assert run(fake, "--demo-data") == 1
+    assert [w for w in fake.writes if "Implements" not in w[1]] == []  # only the earlier seed
+
+
+def test_demo_data_not_allowed_with_check(capsys):
+    with pytest.raises(SystemExit):
+        main(["--check", "--demo-data"], ENV, FakeGrist().transport)
+    assert "--demo-data" in capsys.readouterr().err
+
+
+def test_demo_data_gets_no_step_on_conflict(capsys):
+    tables = full_tables()
+    tables["events"] = tables.pop("Events")
+    fake = FakeGrist(tables)
+    assert run(fake, "--demo-data") == 1
+    assert "demo data" not in capsys.readouterr().out
+    assert fake.writes == []

@@ -201,6 +201,30 @@ EXAMPLE_IMPLEMENTS = (
     ("Shot Put", "Grade 9", "1.5kg"),
 )
 
+# Demo data (init script `--demo-data`): obviously fictional. Events are named as in
+# EXAMPLE_EVENTS and the Discus grades have rows in EXAMPLE_IMPLEMENTS, so the demo rows
+# resolve their Implement. Dates are ISO text.
+DEMO_ATHLETES = (  # (name, grade)
+    ("Athlete A", "Grade 8"),
+    ("Athlete B", "Grade 9"),
+    ("Athlete C", "Grade 9"),
+)
+DEMO_MEETS = (  # (name, ISO date, location)
+    ("Demo Meet 1", "2026-03-07", "Demo Field"),
+    ("Demo Meet 2", "2026-04-18", "Demo Stadium"),
+)
+# (athlete, event, meet, mark, place). Two results for the same athlete, event and implement
+# show a personal best; Discus is a throwing event with an implement.
+DEMO_RESULTS = (
+    ("Athlete A", "100m", "Demo Meet 1", "13.45", 2),
+    ("Athlete A", "100m", "Demo Meet 2", "13.20", 1),
+    ("Athlete A", "800m", "Demo Meet 2", "2:15.30", 3),
+    ("Athlete B", "Discus", "Demo Meet 1", "21.50", 2),
+    ("Athlete B", "Discus", "Demo Meet 2", "23.10", 1),
+    ("Athlete C", "Long Jump", "Demo Meet 1", "4.52", 1),
+    ("Athlete C", "100m", "Demo Meet 2", "14.02", 4),
+)
+
 
 def table(name: str) -> Table:
     """Return the table with this (case sensitive) id; raise KeyError if unknown."""
