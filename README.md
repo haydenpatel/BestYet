@@ -24,23 +24,29 @@ The goals for version 1 (see [Status and Limitations](#status-and-limitations) f
 
 Set up a Grist document with the init script, `bestyet-init`. It only ever adds what is missing (tables, columns, formulas, the personal-bests page, example data), so running it again is safe.
 
-- **Guided:** run `bestyet-init` with no options in a terminal. It asks what it needs (workspace, new or existing document, name, example data), shows the plan and asks before changing anything. It ends with a summary and, for a new document, the `GRIST_DOC_ID=...` line to add to your environment (the script saves nothing itself).
-- **With flags:** for scripts, containers and repeat runs. Without a terminal it never asks, so give every value as a flag.
+**Set up your settings first.** The script reads environment variables (or a `.env` file: copy [`.env.example`](.env.example) to `.env` and fill it in). `GRIST_URL` and `GRIST_API_KEY` are always needed. `GRIST_DOC_ID` is needed to set up an existing document with flags, and not at all for `--create`; in guided mode it is optional (it just adds the option to set up that document). Nothing is saved by the script.
 
-| Flag | What it does | Default |
+- **Guided:** run `bestyet-init` with no options in a terminal. It asks what it needs (workspace, new or existing document, name, example data), shows the plan and asks before changing anything. It ends with a summary and, for a new document, the `GRIST_DOC_ID=...` line to add to your settings.
+- **With flags:** for scripts, containers and repeat runs. Without a terminal it never asks, so give every value you need as a flag.
+
+| Flag | What it does | Required | Default |
+| --- | --- | --- | --- |
+| `--create` | Create a new document | No | off: set up the document in `GRIST_DOC_ID` |
+| `--workspace W` | Workspace id or name for the new document | Only with `--create` (asked for in a terminal) | none |
+| `--org O` | Organisation id or name, to narrow `--workspace` | No | all organisations |
+| `--name N` | Name of the new document; one that already exists in the workspace is never duplicated | No | `BestYet` |
+| `--seed-implements` | Also add the example implements (the example events are always added) | No | off |
+| `--demo-data` | Also load fictional athletes, meets and results; refused unless those tables are empty | No | off |
+| `--allow-existing-tables` | Add to a document that has tables of its own (a blank one made in Grist has an empty `Table1`; `--create` avoids this) | No | off: refused |
+| `-y`, `--yes` | Apply without asking | Without a terminal (unless `--dry-run`) | off: asks |
+| `--dry-run` | Show the plan and change nothing | No | off |
+| `--check` | Read-only: list every difference from the schema contract, or say it matches; exits non-zero on any difference. The app runs the same check at startup | No | off |
+
+| Setting | Required | Notes |
 | --- | --- | --- |
-| `--create` | Create a new document (needs `--workspace`; in a terminal it asks if missing) | off: set up the document in `GRIST_DOC_ID` |
-| `--workspace W` | Workspace id or name for the new document | none |
-| `--org O` | Organisation id or name, to narrow `--workspace` | all organisations |
-| `--name N` | Name of the new document; one that already exists in the workspace is never duplicated | `BestYet` |
-| `--seed-implements` | Also add the example implements (the example events are always added) | off |
-| `--demo-data` | Also load fictional athletes, meets and results; refused unless those tables are empty | off |
-| `--allow-existing-tables` | Add to a document that has tables of its own (a blank one made in Grist has an empty `Table1`; `--create` avoids this) | off: refused |
-| `-y`, `--yes` | Apply without asking (required without a terminal) | off: asks |
-| `--dry-run` | Show the plan and change nothing | off |
-| `--check` | Read-only: list every difference from the schema contract, or say it matches; exits non-zero on any difference. The app runs the same check at startup | off |
-
-Settings come from environment variables only: `GRIST_URL`, `GRIST_API_KEY` and `GRIST_DOC_ID` (not needed with `--create`); see [Configuration](#configuration).
+| `GRIST_URL` | Yes | Base URL of the Grist server |
+| `GRIST_API_KEY` | Yes | Never printed |
+| `GRIST_DOC_ID` | Yes, unless `--create`; optional in guided mode | The document to set up or `--check` |
 
 Once the project's container image exists (a later milestone), the same command can run as a one-off in it, with the settings passed as environment variables and nothing written to disk:
 
