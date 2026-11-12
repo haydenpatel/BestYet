@@ -1090,7 +1090,7 @@ def test_partial_failure_lists_done_and_not_done_for_an_existing_document(capsys
     assert err.startswith("error: Grist reported a server error (HTTP 500: boom)")
     assert "The run stopped part-way." in err
     assert "Done before the failure:\n  - Created table Meets" in err
-    assert "Not done (the first step failed):\n  - Add missing columns to Results: Mark" in err
+    assert "Failed (may be partly applied):\n  - Add missing columns to Results: Mark" in err
     assert err.rstrip().endswith("re-run: it only adds what is missing.")
     assert "Summary" not in captured.out and KEY not in err + captured.out
 
@@ -1205,3 +1205,71 @@ def test_warnings_are_shown_when_the_run_stops_part_way(capsys):
     assert run(fake, "--allow-existing-tables") == 1
     err = capsys.readouterr().err
     assert "Needs attention:" in err and "Table1 not removed" in err and "To fix:" in err
+
+
+def _fail_page_rename(fake):
+    orig = fake.handle
+
+    def handle(request):
+        if b"_grist_Views" in request.content:  # the rename after CreateViewSection
+            return httpx.Response(500, json={"error": "boom"})
+        return orig(request)
+
+    fake.transport = httpx.MockTransport(handle)
+
+
+def _fail_trigger_update(fake):
+    orig = fake.handle
+
+    def handle(request):
+        if request.method == "PATCH" and b"recalcDeps" in request.content:
+            return httpx.Response(500, json={"error": "boom"})
+        return orig(request)
+
+    fake.transport = httpx.MockTransport(handle)
+
+
+@pytest.mark.parametrize(
+    ("break_it", "problem", "failed"),
+    [
+        (
+            _fail_page_rename,
+            "was created but not named 'Personal bests'",
+            "Create the 'Personal bests' page",
+        ),
+        (
+            _fail_trigger_update,
+            "Created without its trigger dependency",
+            "Add missing columns to Results",
+        ),
+    ],
+)
+def test_create_with_a_failure_a_rerun_cannot_fix_keeps_the_id_and_does_not_say_rerun(
+    capsys, break_it, problem, failed
+):
+    fake = FakeGrist()
+    break_it(fake)
+    assert run(fake, *CREATE, env=ENV_NO_DOC) == 1
+    err = capsys.readouterr().err
+    assert problem in err and "Failed (may be partly applied):" in err and failed in err
+    assert "id NEWDOC" in err and "GRIST_DOC_ID=NEWDOC" in err
+    assert "Fix the problem described above in Grist first" in err
+    assert "To continue, re-run" not in err and "it only adds what is missing" not in err
+    assert "Do not re-run --create" in err and KEY not in err
+
+
+def test_failed_step_is_separated_from_the_steps_not_done(capsys):
+    fake = full_fake()
+    del fake.tables["Meets"]
+    del fake.tables["Results"]["Mark"]
+    fake.fail_on = "POST /api/docs/DOC_ID_HERE/tables/Results/columns"
+    assert run(fake) == 1
+    err = capsys.readouterr().err
+    assert "Failed (may be partly applied):\n  - Add missing columns to Results: Mark" in err
+    assert "Not done:" not in err  # it was the last step
+    fake = FakeGrist()
+    fake.fail_on = "POST /api/docs/DOC_ID_HERE/tables"
+    assert run(fake) == 1
+    err = capsys.readouterr().err
+    assert "Failed (may be partly applied):\n  - Create table Athletes" in err
+    assert "Not done:\n  - Create table Events" in err

@@ -74,8 +74,11 @@ class PartialFailure(InitError):
         lines = [reason, "The run stopped part-way."]
         lines.append("Done before the failure:" + ("" if self.done else " nothing"))
         lines += [f"  - {d}" for d in self.done]
-        lines.append("Not done (the first step failed):")
-        lines += [f"  - {p}" for p in self.pending]
+        lines.append("Failed (may be partly applied):")
+        lines.append(f"  - {self.pending[0]}")
+        if rest := self.pending[1:]:
+            lines.append("Not done:")
+            lines += [f"  - {p}" for p in rest]
         if self.attention:
             lines.append("Needs attention:")
             lines += [f"  - {a}" for a in self.attention]
@@ -519,14 +522,13 @@ class LoadDemoData(Step):
 class Plan:
     steps: list[Step] = field(default_factory=list)
     present: list[str] = field(default_factory=list)  # contract tables in the document at the start
+    notes: list[str] = field(default_factory=list)  # reported, never acted on
+    conflicts: list[str] = field(default_factory=list)  # case-only id clashes: the run fails
 
     def unchanged(self) -> list[str]:
         """Present tables that no step touches: they existed and needed nothing."""
         touched = {t for s in self.steps for t in s.tables()}
         return [t for t in self.present if t not in touched]
-
-    notes: list[str] = field(default_factory=list)  # reported, never acted on
-    conflicts: list[str] = field(default_factory=list)  # case-only id clashes: the run fails
 
 
 def _is_plain(column: schema.Column) -> bool:
@@ -803,6 +805,16 @@ def rerun_hint(doc_id: str) -> str:
     )
 
 
+def continue_hint(doc_id: str) -> str:
+    """For a failure a plain re-run would not repair: keep the id, fix the problem first."""
+    return (
+        f"The document was created (id {doc_id}). Fix the problem described above in Grist "
+        f"first, then continue with GRIST_DOC_ID={doc_id} and without --create (add "
+        f"--allow-existing-tables if {DEFAULT_TABLE} is still there). Do not re-run --create: "
+        "it would make another document."
+    )
+
+
 def default_table_state(client: GristClient) -> tuple[bool, str | None]:
     """Return (present, problem): is Table1 there, and why it must not be removed (if so).
 
@@ -901,7 +913,8 @@ def run(
                 done.append(f"Removed Grist's empty default table {DEFAULT_TABLE}")
             _apply(plan, client, [warning] if warning else [], args, out, done, doc_id)
     except PartialFailure as e:
-        raise InitError(e.report(config, rerun_hint(doc_id))) from None
+        hint = rerun_hint(doc_id) if e.rerun_safe else continue_hint(doc_id)
+        raise InitError(e.report(config, hint)) from None
     except GristError as e:
         raise InitError(f"{explain(e, config, 'document')}\n{rerun_hint(doc_id)}") from None
     except InitError as e:
