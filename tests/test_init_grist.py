@@ -603,8 +603,8 @@ def test_default_table_kept_with_warning_when_a_condition_fails(
     assert "Athletes" in fake.tables
     warning = f"warning: Table1 not removed: {reason}"
     assert out.count(warning) == 2  # when found, and again in the summary
-    summary = out[out.rindex("warning: Table1") :]
-    assert warning in summary and "--allow-existing-tables" in summary
+    summary = next(line for line in out.splitlines() if "next step" in line)
+    assert summary.startswith(warning) and "--allow-existing-tables" in summary
     assert "remove Table1 in Grist" in summary
 
 
@@ -651,7 +651,7 @@ def test_next_step_depends_on_the_allow_flag(capsys):
     fake = FakeGrist({"Table1": DEFAULTS})
     assert run(fake, "--allow-existing-tables") == 0
     out = capsys.readouterr().out
-    summary = out[out.rindex("warning: Table1") :]
+    summary = next(line for line in out.splitlines() if "next step" in line)
     assert "next step: remove Table1 in Grist" in summary
     assert "--allow-existing-tables" not in summary
     fake = FakeGrist(new_doc_tables={"Table1": DEFAULTS, "Notes": {}})
@@ -966,7 +966,7 @@ def test_demo_data_rechecked_when_applied(capsys):
     def handle(request):
         if request.method == "GET" and request.url.path.endswith("/tables/Results/records"):
             seen.append(1)
-            if len(seen) == 2:  # second read: the apply-time check
+            if len(seen) == 2:  # relies on 2 reads: plan-time check, then apply-time check
                 fake.rows["Results"] = [{"id": 1, "fields": {}}]
         return orig(request)
 

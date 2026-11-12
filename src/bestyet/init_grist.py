@@ -13,8 +13,11 @@ the contract (``bestyet.check``, also run by the app at startup) and exits non-z
 Seed rows are plan steps too: the example Events always, the example Implements only with
 ``--seed-implements``. ``--demo-data`` adds fictional athletes, meets and results as the last
 step; it plans the example Events and Implements it needs, and refuses (writing nothing) unless
-Athletes, Meets and Results are all empty. They only add rows that are missing (Events matched by Name,
-Implements by Event and Grade, ignoring case and surrounding spaces); an existing row is never changed or duplicated.
+Athletes, Meets and Results are all empty.
+
+The Events and Implements seeds only add rows that are missing (Events matched by Name,
+Implements by Event and Grade, ignoring case and surrounding spaces); an existing row is never
+changed or duplicated.
 
 The plan is a list of small steps, each with ``describe()`` and ``apply(client)``, so later
 work adds step types and extends ``build_plan`` without touching the CLI.
