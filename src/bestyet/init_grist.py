@@ -397,7 +397,7 @@ def _require_empty(client: GristClient, tables: Collection[str], note: str = "")
     if full := _non_empty(client, tables):
         raise InitError(
             f"--demo-data only loads into empty Athletes, Meets and Results; {', '.join(full)} "
-            f"already has rows{note}"
+            f"already {'has' if len(full) == 1 else 'have'} rows{note}"
         )
 
 
