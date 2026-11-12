@@ -24,7 +24,7 @@ pip install -e ".[dev]"
 ruff check . && ruff format --check . && pytest
 ```
 
-Unit tests mock Grist. Tests marked `integration` need a real Grist document and are skipped by default and in CI. To run them, set `GRIST_URL`, `GRIST_DOC_ID` and `GRIST_API_KEY` (dev `.env` or environment) for a **TEST** document, then:
+Unit tests mock Grist. Tests marked `integration` need a real Grist document and are skipped by default and in CI. To run them, set `GRIST_URL`, `GRIST_DOC_ID` and `GRIST_API_KEY` (dev `.env` or environment) for a **TEST** document with the demo data loaded (`bestyet-init --demo-data`), then:
 
 ```bash
 BESTYET_INTEGRATION=1 pytest -m integration
