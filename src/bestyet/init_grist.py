@@ -200,6 +200,11 @@ def _check_ids(sent: Sequence[str], got: Sequence[str]) -> None:
 # Plan steps.
 
 
+def _table_name(table: str) -> str:
+    """A table as a user knows it: the summary table's generated id is not shown."""
+    return "the personal bests table" if table == schema.SUMMARY.id else table
+
+
 class Step:
     def describe(self) -> str:
         """What the step will do, for the plan."""
@@ -223,7 +228,7 @@ class CreateTable(Step):
     columns: tuple[schema.Column, ...]
 
     def describe(self) -> str:
-        return f"Create table {self.table.id} ({len(self.columns)} columns)"
+        return f"Create table {self.table.id}"
 
     def created(self) -> str:
         return f"Created table {self.table.id}"
@@ -242,10 +247,10 @@ class AddColumns(Step):
     columns: tuple[schema.Column, ...]
 
     def describe(self) -> str:
-        return f"Add missing columns to {self.table}: {self._names()}"
+        return f"Add missing columns to {_table_name(self.table)}: {self._names()}"
 
     def created(self) -> str:
-        return f"Added columns to {self.table}: {self._names()}"
+        return f"Added columns to {_table_name(self.table)}: {self._names()}"
 
     def tables(self) -> tuple[str, ...]:
         return (self.table,)
@@ -283,10 +288,10 @@ class SetVisibleCols(Step):
     items: tuple[tuple[str, str, str], ...]  # (column id, target table id, target column id)
 
     def describe(self) -> str:
-        return f"Show names instead of ids in {self.table}: {self._names()}"
+        return f"Show names instead of ids in {_table_name(self.table)}: {self._names()}"
 
     def created(self) -> str:
-        return f"Set {self.table} columns to show names: {self._names()}"
+        return f"Showing names instead of ids in {_table_name(self.table)}: {self._names()}"
 
     def tables(self) -> tuple[str, ...]:
         return (self.table,)
@@ -334,13 +339,10 @@ class CreateSummaryPage(Step):
 
     def describe(self) -> str:
         s = self.summary
-        return (
-            f"Create the {s.page!r} page with summary table {s.id} "
-            f"(grouped by {', '.join(s.group_by)})"
-        )
+        return f"Create the {s.page!r} page with its summary table"
 
     def created(self) -> str:
-        return f"Created the {self.summary.page!r} page with summary table {self.summary.id}"
+        return f"Created the {self.summary.page!r} page with its summary table"
 
     def tables(self) -> tuple[str, ...]:
         return (self.summary.id,)
@@ -397,7 +399,7 @@ class SeedEvents(Step):
     """Add the example Events whose Name is not there yet."""
 
     def describe(self) -> str:
-        return "Add the example Events that are missing (matched by Name)"
+        return "Add the example Events that are missing"
 
     def created(self) -> str:
         return "Added the example Events"
@@ -416,7 +418,7 @@ class SeedImplements(Step):
     """Add the example Implements whose Event and Grade pair is not there yet."""
 
     def describe(self) -> str:
-        return "Add the example Implements that are missing (matched by Event and Grade)"
+        return "Add the example Implements that are missing"
 
     def created(self) -> str:
         return "Added the example Implements"
@@ -464,9 +466,12 @@ class LoadDemoData(Step):
     """
 
     def describe(self) -> str:
+        return f"Add demo data ({self._counts()}; only if those tables are empty)"
+
+    def _counts(self) -> str:
         return (
-            f"Add demo data: {len(schema.DEMO_ATHLETES)} athletes, {len(schema.DEMO_MEETS)} "
-            f"meets, {len(schema.DEMO_RESULTS)} results (only if those tables are empty)"
+            f"{len(schema.DEMO_ATHLETES)} athletes, {len(schema.DEMO_MEETS)} meets, "
+            f"{len(schema.DEMO_RESULTS)} results"
         )
 
     def created(self) -> str:
@@ -689,13 +694,92 @@ def _plan_summary(
         plan.steps.append(SetVisibleCols(s.id, items))
 
 
+# Plan and summary text: what the user cares about, grouped, not one line per internal step.
+
+GROUPS = ("Tables", "Calculated columns", "Personal bests", "Display", "Example data")
+
+
+def grouped(steps: Sequence[Step], past: bool = False) -> list[tuple[str, list[str]]]:
+    """Group steps by outcome, in plain words. `past`: for the summary of what was done."""
+    out: dict[str, list[str]] = {g: [] for g in GROUPS}
+    page_made = any(isinstance(s, CreateSummaryPage) for s in steps)
+    new = [s.table.id for s in steps if isinstance(s, CreateTable)]
+    if new:
+        out["Tables"].append(f"{'Created' if past else 'Create'} {', '.join(new)}")
+    example: list[str] = []
+    for s in steps:
+        if isinstance(s, AddColumns) and s.table == schema.SUMMARY.id:
+            if not page_made:
+                verb = "Added" if past else "Add"
+                out["Personal bests"].append(
+                    f"{verb} the missing column to the summary table: {s._names()}"
+                )
+        elif isinstance(s, AddColumns) and s.columns[0].formula is None:
+            verb = "Added columns to" if past else "Add missing columns to"
+            out["Tables"].append(f"{verb} {s.table}: {s._names()}")
+        elif isinstance(s, AddColumns):
+            worked = [c.id for c in s.columns if c.is_formula]
+            filled = [c.id for c in s.columns if not c.is_formula]
+            parts = []
+            if worked:
+                parts.append(f"{', '.join(worked)} (worked out by Grist)")
+            if filled:
+                parts.append(f"{', '.join(filled)} (filled in automatically)")
+            out["Calculated columns"].append(f"{s.table}: {', '.join(parts)}")
+        elif isinstance(s, CreateSummaryPage):
+            verb = "Created" if past else "Create"
+            out["Personal bests"].append(
+                f"{verb} a {s.summary.page!r} page showing each athlete's best per event"
+            )
+        elif isinstance(s, SetVisibleCols) and not out["Display"]:
+            out["Display"].append(
+                "Set Ref columns to show names instead of ids"
+                if past
+                else "Show names instead of ids in the Ref columns"
+            )
+        elif isinstance(s, SeedEvents):
+            example.append("Events" if past else "Events (missing ones only)")
+        elif isinstance(s, SeedImplements):
+            example.append("Implements" if past else "Implements (missing ones only)")
+        elif isinstance(s, LoadDemoData):
+            example.append(
+                "demo data"
+                if past
+                else f"demo data ({s._counts()}; only if those tables are empty)"
+            )
+    if example:
+        out["Example data"].append(", ".join(example))
+    return [(g, lines) for g, lines in out.items() if lines]
+
+
+def _print_groups(groups: Sequence[tuple[str, Sequence[str]]], out) -> None:
+    for heading, lines in groups:
+        print(f"  {heading}", file=out)
+        for line in lines:
+            print(f"    - {line}", file=out)
+
+
 # Workspace lookup.
 
 
 def resolve_workspace(client: GristClient, workspace: str, org: str | None = None) -> int:
     """Return a workspace id from a numeric id or a name (optionally within one org)."""
+    return resolve_workspace_label(client, workspace, org)[0]
+
+
+def resolve_workspace_label(
+    client: GristClient, workspace: str, org: str | None = None
+) -> tuple[int, str]:
+    """Return (workspace id, a label for messages): its name when it can be found."""
     if workspace.isascii() and workspace.isdigit():
-        return int(workspace)
+        try:  # best effort: only for the plan's wording
+            for o in client.orgs():
+                for w in client.workspaces(o["id"]):
+                    if str(w["id"]) == workspace and w.get("name"):
+                        return int(workspace), f"workspace {w['name']!r}"
+        except GristError:
+            pass
+        return int(workspace), f"workspace {workspace}"
     orgs = client.orgs()
     if org is not None:
         orgs = [o for o in orgs if str(o["id"]) == org or o.get("name") == org]
@@ -716,7 +800,7 @@ def resolve_workspace(client: GristClient, workspace: str, org: str | None = Non
         raise InitError(
             f"Workspace name {workspace!r} is ambiguous (ids: {ids}); use the id or --org"
         )
-    return int(matches[0]["id"])
+    return int(matches[0]["id"]), f"workspace {workspace!r}"
 
 
 # CLI.
@@ -890,13 +974,10 @@ def run(
         return
 
     with _explaining(config, "workspace"), client_for("") as admin:
-        workspace_id = resolve_workspace(admin, args.workspace, args.org)
+        workspace_id, workspace_label = resolve_workspace_label(admin, args.workspace, args.org)
     lead = [
-        f"Create document {args.name!r} in workspace {workspace_id}",
-        (
-            f"Then remove Grist's default table {DEFAULT_TABLE} if it is untouched "
-            "(no rows, only columns A, B, C)"
-        ),
+        f"Create {args.name!r} in {workspace_label}",
+        f"Remove Grist's empty default table ({DEFAULT_TABLE})",
     ]
     # A new document is empty apart from that default table, so the plan is the full contract.
     plan = build_plan({}, seed_implements=args.seed_implements, demo_data=args.demo_data)
@@ -910,7 +991,7 @@ def run(
         with client_for(doc_id) as client:
             removed, warning = remove_default_table(client)
             if removed:
-                done.append(f"Removed Grist's empty default table {DEFAULT_TABLE}")
+                done.append(f"Removed Grist's empty default table ({DEFAULT_TABLE})")
             _apply(plan, client, [warning] if warning else [], args, out, done, doc_id)
     except PartialFailure as e:
         hint = rerun_hint(doc_id) if e.rerun_safe else continue_hint(doc_id)
@@ -981,8 +1062,7 @@ def _show_plan(plan: Plan, lead: Sequence[str], args: argparse.Namespace, out) -
         print("Needs a manual fix in Grist (this script changes nothing for these):", file=out)
         for conflict in plan.conflicts:
             print(f"  - {conflict}", file=out)
-    lines = [*lead, *(s.describe() for s in plan.steps)]
-    if not lines:
+    if not lead and not plan.steps:
         print(
             "Nothing to do: the document already has everything this script adds. "
             "To verify it against the contract, run bestyet-init --check.",
@@ -990,8 +1070,8 @@ def _show_plan(plan: Plan, lead: Sequence[str], args: argparse.Namespace, out) -
         )
         return False
     print("Plan:", file=out)
-    for line in lines:
-        print(f"  - {line}", file=out)
+    _print_groups([("Document", lead)] if lead else [], out)
+    _print_groups(grouped(plan.steps), out)
     if args.dry_run:
         print("Dry run: nothing was changed. Run again without --dry-run to apply.", file=out)
     return True
@@ -1027,18 +1107,19 @@ def _apply(
     doc_id: str | None = None,
 ) -> None:
     """Apply the steps. `done` holds what was already done in this run (the document)."""
-    done = list(done)
+    applied: list[Step] = []
     print(f"Applying {len(plan.steps)} change{'' if len(plan.steps) == 1 else 's'}...", file=out)
     for i, step in enumerate(plan.steps):
         try:
             step.apply(client)
         except (GristError, InitError) as e:
             attention = [f"{w}. To fix: {next_step(args.allow_existing_tables)}" for w in warnings]
+            before = [*done, *(s.created() for s in applied)]
             raise PartialFailure(
-                done, [s.describe() for s in plan.steps[i:]], e, attention
+                before, [s.describe() for s in plan.steps[i:]], e, attention
             ) from None
-        done.append(step.created())
-    _finish(plan, warnings, args, out, done, doc_id)
+        applied.append(step)
+    _finish(plan, warnings, args, out, done, doc_id, applied)
 
 
 def _finish(
@@ -1046,19 +1127,24 @@ def _finish(
     warnings: Sequence[str],
     args: argparse.Namespace,
     out,
-    done: Sequence[str] | None = None,
+    done: Sequence[str] = (),
     doc_id: str | None = None,
+    applied: Sequence[Step] | None = None,
 ) -> None:
     """Print the closing summary (after a run that applied changes), warnings and next steps.
 
-    `done` is None when nothing was applied (dry run, declined, nothing to do)."""
-    if done is not None:
+    `done` is what was done outside the plan steps (the document); `applied` is None when
+    nothing was applied (dry run, declined, nothing to do)."""
+    if applied is not None:
         print("\nSummary", file=out)
-        print("  Done:" if done else "  Done: nothing", file=out)
-        for item in done:
-            print(f"    - {item}", file=out)
+        groups = ([("Document", done)] if done else []) + grouped(applied, past=True)
+        if groups:
+            _print_groups(groups, out)
+        else:
+            print("  Nothing was changed", file=out)
         if unchanged := plan.unchanged():
-            print(f"  Already there, unchanged: tables {', '.join(unchanged)}", file=out)
+            names = ["the personal bests table" if t == schema.SUMMARY.id else t for t in unchanged]
+            print(f"  Already there, unchanged: {', '.join(names)}", file=out)
     if warnings:
         print("Needs attention:", file=out)
         for w in warnings:
@@ -1068,7 +1154,7 @@ def _finish(
             "The document differs from the contract in ways this script does not change "
             "(listed above). Fix them in Grist, then re-run."
         )
-    if done is not None:
+    if applied is not None:
         print("\nNext steps", file=out)
         if doc_id:
             print(

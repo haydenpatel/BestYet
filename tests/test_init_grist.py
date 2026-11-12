@@ -216,7 +216,7 @@ def test_dry_run_lists_seed_steps_and_writes_nothing(capsys):
     fake.rows["Events"] = []
     assert run(fake, "--dry-run", "--seed-implements") == 0
     out = capsys.readouterr().out
-    assert "example Events" in out and "example Implements" in out
+    assert "Events (missing ones only)" in out and "Implements (missing ones only)" in out
     assert fake.writes == []
 
 
@@ -383,7 +383,7 @@ def test_dry_run_changes_nothing(capsys):
     assert run(fake, "--dry-run", yes=False) == 0
     assert fake.writes == []
     out = capsys.readouterr().out
-    assert "Create table Athletes" in out and "Plan:" in out
+    assert "Create Athletes, Events" in out and "Plan:" in out
 
 
 def test_create_in_workspace_by_id(capsys):
@@ -403,7 +403,7 @@ def test_create_dry_run_creates_nothing(capsys):
     fake = FakeGrist()
     assert run(fake, "--create", "--workspace", "Work", "--dry-run", yes=False) == 0
     assert fake.created_docs == [] and fake.writes == []
-    assert "Create document" in capsys.readouterr().out
+    assert "Create 'BestYet' in workspace" in capsys.readouterr().out
 
 
 def test_workspace_ambiguous_and_org_narrowing(capsys):
@@ -741,17 +741,17 @@ def test_plan_is_printed_before_the_first_write(capsys):
     assert run(fake, *CREATE, env=ENV_NO_DOC) == 0
     before = seen[0]
     assert "Plan:" in before
-    assert "Create document 'BestYet' in workspace 10" in before
-    assert "remove Grist's default table Table1" in before
-    assert all(f"Create table {t.id}" in before for t in schema.TABLES)
+    assert "Create 'BestYet' in workspace 'Work'" in before
+    assert "Remove Grist's empty default table (Table1)" in before
+    assert all(t.id in before for t in schema.TABLES)
     assert "Summary" not in before and "Created document" not in before
 
     capsys.readouterr()
     fake = FakeGrist()
     seen = spy_first_write(fake, capsys)
     assert run(fake) == 0
-    assert "Plan:" in seen[0] and "Create table Athletes" in seen[0] and "Summary" not in seen[0]
-    assert "Created table Athletes" in capsys.readouterr().out
+    assert "Plan:" in seen[0] and "Create Athletes" in seen[0] and "Summary" not in seen[0]
+    assert "Created Athletes" in capsys.readouterr().out
 
 
 @pytest.mark.parametrize(
@@ -898,7 +898,7 @@ def test_demo_data_on_fresh_doc(capsys):
     assert len(fake.rows["Implements"]) == len(schema.EXAMPLE_IMPLEMENTS)  # seeded as needed
     assert len(fake.rows["Events"]) == len(schema.EXAMPLE_EVENTS)
     out = capsys.readouterr().out
-    assert out.index("Add the example Events") < out.index("Add demo data")
+    assert out.index("Events (missing") < out.index("demo data (3 athletes")
 
 
 def test_demo_results_leave_computed_columns_to_grist():
@@ -956,7 +956,7 @@ def test_demo_data_twice_refuses_second_time(capsys):
 def test_demo_data_dry_run_and_prompt_write_nothing(monkeypatch, capsys):
     fake = full_fake()
     assert run(fake, "--demo-data", "--dry-run") == 0
-    assert "Add demo data" in capsys.readouterr().out and fake.writes == []
+    assert "demo data (3 athletes" in capsys.readouterr().out and fake.writes == []
     monkeypatch.setattr(sys, "stdin", Stdin("n\n"))
     assert run(fake, "--demo-data", yes=False) == 0
     assert fake.writes == []
@@ -1110,7 +1110,7 @@ def test_partial_failure_after_create_names_the_document(capsys):
     captured = capsys.readouterr()
     assert "Created document 'BestYet' (id NEWDOC)." in captured.out  # printed straight away
     assert "Done before the failure:\n  - Created document 'BestYet' (id NEWDOC)" in captured.err
-    assert "Removed Grist's empty default table Table1" in captured.err
+    assert "Removed Grist's empty default table (Table1)" in captured.err
     assert "re-run without --create and with GRIST_DOC_ID=NEWDOC" in captured.err
 
 
@@ -1122,8 +1122,8 @@ def test_create_prints_the_closing_summary(capsys):
     assert captured.err == "" and KEY not in out
     summary = out[out.index("\nSummary") :]
     assert "Created document 'My Doc' (id NEWDOC)" in summary
-    assert "Removed Grist's empty default table Table1" in summary
-    assert "Created table Athletes" in summary and "Created the 'Personal bests' page" in summary
+    assert "Removed Grist's empty default table (Table1)" in summary
+    assert "Created Athletes" in summary and "Created a 'Personal bests' page" in summary
     assert "Already there" not in summary and "Needs attention" not in summary
     assert "\n      GRIST_DOC_ID=NEWDOC\n" in summary  # on a line of its own
     assert "saved nothing" in summary and "bestyet-init --check" in summary
@@ -1135,9 +1135,7 @@ def test_rerun_summary_lists_what_was_added_and_what_was_there(capsys):
     assert run(fake) == 0
     out = capsys.readouterr().out
     summary = out[out.index("\nSummary") :]
-    assert (
-        "Created table Meets" in summary and "Already there, unchanged: tables Athletes" in summary
-    )
+    assert "Created Meets" in summary and "Already there, unchanged: Athletes" in summary
     assert "Meets," not in summary.split("Already there")[1]
     assert "GRIST_DOC_ID" not in summary and "bestyet-init --check" in summary
 
@@ -1273,3 +1271,43 @@ def test_failed_step_is_separated_from_the_steps_not_done(capsys):
     err = capsys.readouterr().err
     assert "Failed (may be partly applied):\n  - Create table Athletes" in err
     assert "Not done:\n  - Create table Events" in err
+
+
+def test_plan_is_grouped_in_plain_words(capsys):
+    fake = FakeGrist(orgs=None) if False else FakeGrist()
+    assert run(fake, *CREATE, "--seed-implements", "--demo-data", "--dry-run", env=ENV_NO_DOC) == 0
+    out = capsys.readouterr().out
+    headings = [
+        line.strip()
+        for line in out.splitlines()
+        if line.startswith("  ") and not line.startswith("    ")
+    ]
+    assert headings == [
+        "Document",
+        "Tables",
+        "Calculated columns",
+        "Personal bests",
+        "Display",
+        "Example data",
+    ]
+    assert "Create 'BestYet' in workspace 'Work'" in out
+    assert "Results: Value, Date, IsPB (worked out by Grist), Grade, Implement" in out
+    assert "(filled in automatically)" in out
+    assert "showing each athlete's best per event" in out
+    assert "(3 athletes, 2 meets, 7 results; only if those tables are empty)" in out
+    assert "Results_summary" not in out and "columns)" not in out and "untouched" not in out
+
+
+def test_workspace_given_by_id_is_shown_by_name_when_known(capsys):
+    fake = FakeGrist()
+    assert run(fake, "--create", "--workspace", "10", "--dry-run", env=ENV_NO_DOC) == 0
+    assert "workspace 'Work'" in capsys.readouterr().out
+
+
+def test_summary_is_grouped_and_hides_internal_ids(capsys):
+    assert run(FakeGrist(), *CREATE, env=ENV_NO_DOC) == 0
+    out = capsys.readouterr().out
+    summary = out[out.index("\nSummary") :]
+    for heading in ("Document", "Tables", "Calculated columns", "Personal bests", "Display"):
+        assert f"  {heading}\n" in summary
+    assert "Results_summary" not in summary
