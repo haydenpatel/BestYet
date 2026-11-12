@@ -19,8 +19,14 @@ The Events and Implements seeds only add rows that are missing (Events matched b
 Implements by Event and Grade, ignoring case and surrounding spaces); an existing row is never
 changed or duplicated.
 
-The plan is a list of small steps, each with ``describe()`` and ``apply(client)``, so later
-work adds step types and extends ``build_plan`` without touching the CLI.
+The plan is a list of small steps, each with ``describe()`` (for the plan), ``created()`` (for
+the closing summary) and ``apply(client)``, so later work adds step types and extends
+``build_plan`` without touching the CLI.
+
+Output is for a person: plain-language lines on stdout, errors on stderr (``explain`` turns each
+Grist failure into a message with what was tried, the likely cause and what to check; it names
+the host only, never credentials, path or key). A run that applied changes ends with a summary
+and the next steps; a run that stopped part-way reports what was done and what was not.
 """
 
 import argparse
