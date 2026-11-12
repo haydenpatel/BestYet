@@ -205,6 +205,10 @@ class GristClient:
     def workspaces(self, org: int | str) -> list:
         return self._request("GET", f"orgs/{_q(org)}/workspaces")
 
+    def workspace(self, workspace_id: int | str) -> dict:
+        """One workspace, with its `docs`."""
+        return self._request("GET", f"workspaces/{_q(workspace_id)}")
+
     def create_doc(self, workspace_id: int, name: str) -> str:
         """Create an empty document. Returns its id."""
         return self._request("POST", f"workspaces/{_q(workspace_id)}/docs", body={"name": name})

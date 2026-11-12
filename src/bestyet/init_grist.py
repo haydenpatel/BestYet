@@ -35,7 +35,7 @@ import re
 import sys
 from collections.abc import Collection, Mapping, Sequence
 from contextlib import contextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from urllib.parse import urlsplit
 
 import httpx
@@ -56,12 +56,14 @@ class PartialFailure(InitError):
     def __init__(
         self,
         done: Sequence[str],
-        pending: Sequence[str],
+        applied: Sequence["Step"],
+        pending: Sequence["Step"],
         error: Exception,
         attention: Sequence[str] = (),
     ):
         super().__init__(str(error))
-        self.done, self.pending, self.error = list(done), list(pending), error
+        self.done, self.applied, self.pending = list(done), list(applied), list(pending)
+        self.error = error
         self.attention = list(attention)
 
     @property
@@ -72,13 +74,14 @@ class PartialFailure(InitError):
     def report(self, config: Config, fix: str) -> str:
         reason = explain(self.error, config, "document") if self.rerun_safe else str(self.error)
         lines = [reason, "The run stopped part-way."]
-        lines.append("Done before the failure:" + ("" if self.done else " nothing"))
-        lines += [f"  - {d}" for d in self.done]
+        done = ([("Document", self.done)] if self.done else []) + grouped(self.applied, past=True)
+        lines.append("Done before the failure:" + ("" if done else " nothing"))
+        lines += group_lines(done)
         lines.append("Failed (may be partly applied):")
-        lines.append(f"  - {self.pending[0]}")
+        lines += group_lines(grouped(self.pending[:1]))
         if rest := self.pending[1:]:
             lines.append("Not done:")
-            lines += [f"  - {p}" for p in rest]
+            lines += group_lines(grouped(rest))
         if self.attention:
             lines.append("Needs attention:")
             lines += [f"  - {a}" for a in self.attention]
@@ -752,11 +755,55 @@ def grouped(steps: Sequence[Step], past: bool = False) -> list[tuple[str, list[s
     return [(g, lines) for g, lines in out.items() if lines]
 
 
+def group_lines(groups: Sequence[tuple[str, Sequence[str]]]) -> list[str]:
+    lines = []
+    for heading, items in groups:
+        lines.append(f"  {heading}")
+        lines += [f"    - {item}" for item in items]
+    return lines
+
+
 def _print_groups(groups: Sequence[tuple[str, Sequence[str]]], out) -> None:
-    for heading, lines in groups:
-        print(f"  {heading}", file=out)
-        for line in lines:
-            print(f"    - {line}", file=out)
+    for line in group_lines(groups):
+        print(line, file=out)
+
+
+# Duplicate names.
+
+
+class NameTaken(InitError):
+    """A document with that name already exists in the workspace (only an explicit yes in a
+    terminal creates another)."""
+
+    def __init__(self, existing: str, label: str):
+        super().__init__(
+            f"A document named {existing!r} already exists in {label}. "
+            "Pick another name with --name."
+        )
+        self.existing, self.label = existing, label
+
+
+def existing_docs(client: GristClient, workspace_id: int) -> list[dict]:
+    """The documents in one workspace, as Grist lists them (`id` and `name`)."""
+    for org in client.orgs():
+        for w in client.workspaces(org["id"]):
+            if w["id"] == workspace_id and "docs" in w:
+                return list(w["docs"])
+    return list(client.workspace(workspace_id).get("docs", []))
+
+
+def name_clash(client: GristClient, workspace_id: int, name: str) -> str | None:
+    """The name of a document in the workspace that has this name (ignoring case and
+    surrounding spaces), if any."""
+    wanted = name.strip().casefold()
+    return next(
+        (
+            d["name"]
+            for d in existing_docs(client, workspace_id)
+            if d["name"].strip().casefold() == wanted
+        ),
+        None,
+    )
 
 
 # Workspace lookup.
@@ -784,10 +831,7 @@ def resolve_workspace_label(
     if org is not None:
         orgs = [o for o in orgs if str(o["id"]) == org or o.get("name") == org]
         if not orgs:
-            raise InitError(
-                f"Organisation {org!r} not found. Check --org (an id or exact name) and that "
-                "the API key's user can see it."
-            )
+            raise InitError(ORG_NOT_FOUND.format(org=org))
     matches = [w for o in orgs for w in client.workspaces(o["id"]) if w.get("name") == workspace]
     if not matches:
         raise InitError(
@@ -850,6 +894,7 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
             "refused unless Athletes, Meets and Results are all empty"
         ),
     )
+    p.set_defaults(duplicate_ok=False, doc_id=None)  # set by the questions, not by flags
     args = p.parse_args(argv)
     if args.check:
         used = [
@@ -869,6 +914,8 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         ]
         if used:
             p.error(f"--check is read-only and cannot be combined with {', '.join(used)}")
+    if args.interactive and args.yes:
+        p.error("--interactive asks you to confirm the plan, so it cannot be combined with --yes")
     if not args.interactive:  # the guided mode asks for what is missing
         if args.create and not args.workspace:
             p.error("--create needs --workspace")
@@ -967,6 +1014,10 @@ def not_created_warning() -> str:
 
 
 ABORT = "aborted; nothing was changed"
+ORG_NOT_FOUND = (
+    "Organisation {org!r} not found. Check --org (an id or exact name) and that the API "
+    "key's user can see it."
+)
 
 
 def _ask(out, prompt: str, stdin) -> str:
@@ -1013,6 +1064,8 @@ def _choose_workspace(client: GristClient, org: str | None, out, stdin) -> str:
     orgs = client.orgs()
     if org is not None:
         orgs = [o for o in orgs if str(o["id"]) == org or o.get("name") == org]
+        if not orgs:
+            raise InitError(ORG_NOT_FOUND.format(org=org))
     several = len(orgs) > 1
     found = [(o, w) for o in orgs for w in client.workspaces(o["id"])]
     if not found:
@@ -1036,37 +1089,61 @@ def guide(args: argparse.Namespace, config: Config, client_for, out, stdin) -> b
         "BestYet setup: a few questions first; nothing is changed until you confirm the plan.\n",
         file=out,
     )
-    if args.workspace or args.org:
-        args.create = True  # naming a workspace means a new document
-    if not args.create:
-        if config.grist_doc_id:
-            kind = _ask_choice(
-                out,
-                "Set up a new document, or the existing one in GRIST_DOC_ID?",
-                ["A new document", "The existing document (GRIST_DOC_ID)"],
-                stdin,
-            )
-            args.create = kind == 0
-        else:
-            print(
-                "GRIST_DOC_ID is not set, so there is no existing document to set up. To use "
-                "one, set GRIST_DOC_ID to its id and run this again.",
-                file=out,
-            )
-            if not _ask_yes_no(out, "Create a new document instead?", stdin, default=True):
-                print("Nothing was changed.", file=out)
-                return False
-            args.create = True
-    demo_allowed = True
-    if args.create:
+    doc_id = config.grist_doc_id
+    create = args.create
+    with _explaining(config, "workspace"), client_for("") as admin:
         if not args.workspace:
-            with _explaining(config, "workspace"), client_for("") as admin:
-                args.workspace = _choose_workspace(admin, args.org, out, stdin)
-        if not args.name:
-            args.name = _ask(out, "Name for the new document [BestYet]: ", stdin) or "BestYet"
-    else:
-        with _explaining(config, "document"), client_for(config.grist_doc_id) as client:
-            demo_allowed = not _non_empty(client, contract_table_ids(client.tables()))
+            args.workspace = _choose_workspace(admin, args.org, out, stdin)
+        ws_id, label = resolve_workspace_label(admin, args.workspace, args.org)
+        if not create:  # which document: one that is already there, or a new one
+            docs = existing_docs(admin, ws_id)
+            options = ["Create a new document", *(d["name"] for d in docs)]
+            if doc_id:
+                options.append("The document in GRIST_DOC_ID")
+            if len(options) == 1:
+                print(f"There are no documents in {label} yet; creating a new one.", file=out)
+                create = True
+            else:
+                pick = _ask_choice(out, f"What should be set up in {label}?", options, stdin)
+                create = pick == 0
+                if 0 < pick <= len(docs):
+                    doc_id = docs[pick - 1]["id"]
+        args.create = create
+        if create:
+            while True:
+                given = bool(args.name)
+                name = args.name or _ask(out, "Name for the new document [BestYet]: ", stdin)
+                args.name = name or "BestYet"
+                if not name_clash(admin, ws_id, args.name):
+                    break
+                question = (
+                    "A document with that name already exists here. "
+                    "Create another with the same name?"
+                )
+                if _ask_yes_no(out, question, stdin):
+                    args.duplicate_ok = True
+                    break
+                if given:
+                    print("Nothing was changed.", file=out)
+                    return False
+                args.name = None
+    demo_allowed = True
+    if not create:
+        args.doc_id = doc_id
+        with _explaining(config, "document"), client_for(doc_id) as client:
+            tables = client.tables()
+            extra = unrelated_tables(tables)
+            if extra and not args.allow_existing_tables:
+                print(
+                    f"This document has tables that are not part of BestYet ({', '.join(extra)}). "
+                    "The script can still add its own tables next to them.",
+                    file=out,
+                )
+                if not _ask_yes_no(out, "Continue and add to it anyway?", stdin):
+                    print("Nothing was changed.", file=out)
+                    return False
+                args.allow_existing_tables = True
+            demo_allowed = not _non_empty(client, contract_table_ids(tables))
     if not args.seed_implements and not args.demo_data:
         args.seed_implements = _ask_yes_no(
             out, "Add the example implements (a starting list you can edit in Grist)?", stdin
@@ -1095,6 +1172,8 @@ def run(
             )
         if not guide(args, config, client_for, out, sys.stdin):
             return
+        if args.doc_id:  # an existing document picked from the workspace's list
+            config = replace(config, grist_doc_id=args.doc_id)
     args.name = args.name or "BestYet"
 
     if args.check:
@@ -1125,13 +1204,33 @@ def run(
         workspace_id, workspace_label = resolve_workspace_label(admin, args.workspace, args.org)
     lead = [
         f"Create {args.name!r} in {workspace_label}",
-        f"Remove Grist's empty default table ({DEFAULT_TABLE})",
+        f"Remove Grist's empty default table ({DEFAULT_TABLE}), if it is untouched",
     ]
+    with _explaining(config, "workspace"), client_for("") as admin:
+        clash = None if args.duplicate_ok else name_clash(admin, workspace_id, args.name)
+    if clash:
+        taken = f"A document named {clash!r} already exists in {workspace_label}."
+        if args.dry_run:
+            print(
+                f"Warning: {taken} A real run asks before creating another one, and refuses "
+                "with --yes or without a terminal.",
+                file=out,
+            )
+        elif args.yes or not _tty(sys.stdin):
+            raise NameTaken(clash, workspace_label)
+        elif _ask_yes_no(out, f"{taken} Create another with the same name?", sys.stdin):
+            args.duplicate_ok = True
+        else:
+            print("Nothing was changed.", file=out)
+            return
     # A new document is empty apart from that default table, so the plan is the full contract.
     plan = build_plan({}, seed_implements=args.seed_implements, demo_data=args.demo_data)
     if not _show_plan(plan, lead, args, out) or args.dry_run or not _confirm(args, out):
         return
     with _explaining(config, "workspace"), client_for("") as admin:
+        # Re-check right before creating: the workspace can change after the first look.
+        if not args.duplicate_ok and (clash := name_clash(admin, workspace_id, args.name)):
+            raise NameTaken(clash, workspace_label)
         doc_id = admin.create_doc(workspace_id, args.name)
     print(f"Created document {args.name!r} (id {doc_id}).", file=out)
     done = [f"Created document {args.name!r} (id {doc_id})"]
@@ -1259,16 +1358,13 @@ def _apply(
 ) -> None:
     """Apply the steps. `done` holds what was already done in this run (the document)."""
     applied: list[Step] = []
-    print(f"Applying {len(plan.steps)} change{'' if len(plan.steps) == 1 else 's'}...", file=out)
+    print("Applying the plan...", file=out)
     for i, step in enumerate(plan.steps):
         try:
             step.apply(client)
         except (GristError, InitError) as e:
             attention = [f"{w}. To fix: {next_step(args.allow_existing_tables)}" for w in warnings]
-            before = [*done, *(s.created() for s in applied)]
-            raise PartialFailure(
-                before, [s.describe() for s in plan.steps[i:]], e, attention
-            ) from None
+            raise PartialFailure(done, applied, plan.steps[i:], e, attention) from None
         applied.append(step)
     _finish(plan, warnings, args, out, done, doc_id, applied)
 

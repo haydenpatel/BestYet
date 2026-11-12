@@ -60,8 +60,17 @@ class FakeGrist:
             return httpx.Response(200, json=self.orgs)
         if m := re.fullmatch(r"orgs/(\d+)/workspaces", path):
             return httpx.Response(200, json=self.workspaces.get(int(m[1]), []))
+        if m := re.fullmatch(r"workspaces/(\d+)", path):
+            found = [w for ws in self.workspaces.values() for w in ws if w["id"] == int(m[1])]
+            if not found:
+                return httpx.Response(404, json={"error": "not found"})
+            return httpx.Response(200, json=found[0])
         if m := re.fullmatch(r"workspaces/(\d+)/docs", path):
             self.created_docs.append((int(m[1]), body["name"]))
+            for ws in self.workspaces.values():
+                for w in ws:
+                    if w["id"] == int(m[1]) and "docs" in w:
+                        w["docs"].append({"id": "NEWDOC", "name": body["name"]})
             self.tables.update({t: dict(c) for t, c in self.new_doc_tables.items()})
             self.rows.update({t: list(r) for t, r in self.new_doc_rows.items()})
             return httpx.Response(200, json="NEWDOC")
