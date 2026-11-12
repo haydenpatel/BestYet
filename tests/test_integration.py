@@ -61,9 +61,12 @@ def test_result_computed_columns(test_grist):
         assert fields["IsPB"] is True
         assert fields["Date"] == MEET_DATE
     finally:
-        if result_ids:
-            grist.delete("Results", result_ids)
-        if meet_ids:
-            grist.delete("Meets", meet_ids)
+        try:
+            if result_ids:
+                grist.delete("Results", result_ids)
+        finally:
+            # Still try to remove the meet if the result delete failed.
+            if meet_ids:
+                grist.delete("Meets", meet_ids)
     assert len(grist.records("Results")) == results_before
     assert len(grist.records("Meets")) == meets_before
