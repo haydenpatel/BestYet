@@ -1335,28 +1335,34 @@ class Interrupting(Stdin):
         raise KeyboardInterrupt
 
 
-def guided(monkeypatch, fake, answers, *argv, env=ENV, tty=True):
-    """Run the CLI with --interactive (unless argv has no need) and scripted answers."""
-    monkeypatch.setattr(sys, "stdin", Stdin(answers, tty=tty))
-    return main(["--interactive", *argv], env, fake.transport)
+def terminal(monkeypatch, stdin):
+    """Make stdin and stdout look like a terminal."""
+    monkeypatch.setattr(sys, "stdin", stdin)
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True, raising=False)
+
+
+def guided(monkeypatch, fake, answers, *argv, env=ENV):
+    """Run the CLI in a terminal with scripted answers (no argv: the guided start)."""
+    terminal(monkeypatch, Stdin(answers))
+    return main(list(argv), env, fake.transport)
 
 
 def test_guided_new_document(monkeypatch, capsys):
     fake = FakeGrist()
-    answers = "1\n1\nMy Doc\ny\nn\ny\n"  # new, workspace 1, name, implements, no demo, apply
+    answers = "y\n1\nMy Doc\ny\nn\ny\n"  # workspace, new, name, implements, no demo, apply
     assert guided(monkeypatch, fake, answers) == 0
     out = capsys.readouterr().out
     assert fake.created_docs == [(10, "My Doc")]
     assert len(fake.rows["Implements"]) == len(schema.EXAMPLE_IMPLEMENTS)
     assert "Athletes" not in fake.rows
-    assert "1. Work" in out and "(Org One)" not in out  # one organisation: no organisation shown
+    assert "Use workspace 'Work'? [Y/n]" in out and "(Org One)" not in out
     assert "Create 'My Doc' in workspace 'Work'" in out and "GRIST_DOC_ID=NEWDOC" in out
     assert KEY not in out
 
 
 def test_guided_new_document_declined_at_the_confirmation(monkeypatch, capsys):
     fake = FakeGrist()
-    assert guided(monkeypatch, fake, "1\n1\n\nn\nn\nn\n") == 0
+    assert guided(monkeypatch, fake, "y\n1\n\nn\nn\nn\n") == 0
     out = capsys.readouterr().out
     assert "Plan:" in out and "Not applied" in out
     assert fake.created_docs == [] and fake.writes == []
@@ -1364,7 +1370,7 @@ def test_guided_new_document_declined_at_the_confirmation(monkeypatch, capsys):
 
 def test_guided_default_name_and_demo_data(monkeypatch):
     fake = FakeGrist()
-    assert guided(monkeypatch, fake, "1\n1\n\nn\ny\ny\n") == 0
+    assert guided(monkeypatch, fake, "y\n1\n\nn\ny\ny\n") == 0
     assert fake.created_docs == [(10, "BestYet")]
     assert len(fake.rows["Results"]) == len(schema.DEMO_RESULTS)
     assert len(fake.rows["Implements"]) == len(schema.EXAMPLE_IMPLEMENTS)  # demo needs them
@@ -1373,7 +1379,7 @@ def test_guided_default_name_and_demo_data(monkeypatch):
 def test_guided_existing_document(monkeypatch, capsys):
     fake = full_fake()
     del fake.tables["Meets"]
-    assert guided(monkeypatch, fake, "1\n2\nn\nn\ny\n") == 0
+    assert guided(monkeypatch, fake, "y\n2\nn\nn\ny\n") == 0
     assert "Meets" in fake.tables and fake.created_docs == []
     assert "GRIST_DOC_ID=" not in capsys.readouterr().out
 
@@ -1382,7 +1388,7 @@ def test_guided_demo_is_not_offered_when_the_tables_have_rows(monkeypatch, capsy
     fake = full_fake()
     fake.rows["Athletes"] = [{"id": 1, "fields": {"Name": "A"}}]
     assert (
-        guided(monkeypatch, fake, "1\n2\nn\n") == 0
+        guided(monkeypatch, fake, "y\n2\nn\n") == 0
     )  # existing, no implements; then nothing to do
     out = capsys.readouterr().out
     assert "Add demo data" not in out and "example implements" in out
@@ -1390,10 +1396,10 @@ def test_guided_demo_is_not_offered_when_the_tables_have_rows(monkeypatch, capsy
 
 def test_guided_bad_numbers_are_asked_again(monkeypatch, capsys):
     fake = FakeGrist()
-    assert guided(monkeypatch, fake, "x\n3\n1\n0\n7\n1\nDoc\nn\nmaybe\nn\ny\n") == 0
+    assert guided(monkeypatch, fake, "x\ny\n0\n7\n1\nDoc\nn\nmaybe\nn\ny\n") == 0
     out = capsys.readouterr().out
     assert "Please enter a number from 1 to 2." in out
-    assert "Please enter a number from 1 to 1." in out and "Please answer y or n." in out
+    assert "Please answer y or n." in out
     assert fake.created_docs == [(10, "Doc")]
 
 
@@ -1407,7 +1413,7 @@ def test_guided_shows_the_organisation_when_there_are_several(monkeypatch, capsy
     assert fake.created_docs == [(20, "Doc")]
 
 
-@pytest.mark.parametrize("answers", ["", "1\n", "1\n1\n", "1\n1\nDoc\nn\n"])
+@pytest.mark.parametrize("answers", ["", "y\n", "y\n1\n", "y\n1\nDoc\nn\n"])
 def test_guided_end_of_input_stops_cleanly(monkeypatch, capsys, answers):
     fake = FakeGrist()
     assert guided(monkeypatch, fake, answers) == 130
@@ -1417,31 +1423,31 @@ def test_guided_end_of_input_stops_cleanly(monkeypatch, capsys, answers):
 
 def test_guided_ctrl_c_stops_cleanly(monkeypatch, capsys):
     fake = FakeGrist()
-    monkeypatch.setattr(sys, "stdin", Interrupting("", tty=True))
-    assert main(["--interactive"], ENV, fake.transport) == 130
+    terminal(monkeypatch, Interrupting("", tty=True))
+    assert main([], ENV, fake.transport) == 130
     assert "aborted; nothing was changed" in capsys.readouterr().err
     assert fake.writes == []
 
 
 def test_guided_with_no_visible_workspace(monkeypatch, capsys):
     fake = FakeGrist(workspaces={1: []})
-    assert guided(monkeypatch, fake, "1\n") == 1
+    assert guided(monkeypatch, fake, "") == 1
     assert "cannot see any workspace" in capsys.readouterr().err
 
 
 def test_guided_without_doc_id_and_without_documents_creates_a_new_one(monkeypatch, capsys):
     fake = FakeGrist()
-    assert guided(monkeypatch, fake, "1\nDoc\nn\nn\ny\n", env=ENV_NO_DOC) == 0
+    assert guided(monkeypatch, fake, "y\nDoc\nn\nn\ny\n", env=ENV_NO_DOC) == 0
     assert "There are no documents in workspace 'Work' yet" in capsys.readouterr().out
     assert fake.created_docs == [(10, "Doc")]
 
 
 def test_guided_flags_skip_their_questions(monkeypatch, capsys):
     fake = FakeGrist()
-    argv = ("--create", "--workspace", "Work", "--name", "Given", "--seed-implements")
-    assert guided(monkeypatch, fake, "n\ny\n", *argv) == 0  # only demo data, then apply
+    argv = ("--create", "--name", "Given", "--seed-implements")
+    assert guided(monkeypatch, fake, "y\nn\ny\n", *argv) == 0  # workspace, demo data, apply
     out = capsys.readouterr().out
-    assert "Which workspace" not in out and "Name for the new" not in out
+    assert "Use workspace 'Work'?" in out and "Name for the new" not in out
     assert "example implements" not in out and "Add demo data" in out
     assert fake.created_docs == [(10, "Given")]
 
@@ -1456,7 +1462,7 @@ def test_guided_workspace_flag_skips_only_the_workspace_question(monkeypatch, ca
 
 def test_guided_dry_run_shows_the_plan_and_writes_nothing(monkeypatch, capsys):
     fake = FakeGrist()
-    assert guided(monkeypatch, fake, "1\n1\nDoc\nn\nn\n", "--dry-run") == 0
+    assert guided(monkeypatch, fake, "y\nDoc\nn\nn\n", "--create", "--dry-run") == 0
     out = capsys.readouterr().out
     assert "Dry run" in out and "Apply these changes" not in out
     assert fake.created_docs == [] and fake.writes == []
@@ -1464,7 +1470,7 @@ def test_guided_dry_run_shows_the_plan_and_writes_nothing(monkeypatch, capsys):
 
 def test_terminal_without_flags_starts_the_guide(monkeypatch, capsys):
     fake = FakeGrist()
-    monkeypatch.setattr(sys, "stdin", Stdin("1\n1\nDoc\nn\nn\ny\n", tty=True))
+    monkeypatch.setattr(sys, "stdin", Stdin("y\n1\nDoc\nn\nn\ny\n", tty=True))
     monkeypatch.setattr(sys, "stdout", TtyOut())
     assert main([], ENV, fake.transport) == 0
     assert fake.created_docs == [(10, "Doc")]
@@ -1485,21 +1491,57 @@ def test_no_terminal_never_prompts(monkeypatch, capsys):
     del fake.tables["Meets"]
     assert main([], ENV, fake.transport) == 1
     captured = capsys.readouterr()
-    assert "BestYet setup" not in captured.out and "--interactive" in captured.err
+    assert "BestYet setup" not in captured.out and "without options" in captured.err
     assert fake.writes == []
 
 
-def test_interactive_needs_a_terminal(monkeypatch, capsys):
+def test_missing_values_are_usage_errors_without_a_terminal(monkeypatch, capsys):
+    monkeypatch.setattr(sys, "stdin", Stdin("y\n", tty=False))
+    for argv, message in (
+        (["--create"], "--create needs --workspace"),
+        (["--workspace", "Work"], "only apply with --create"),
+        (["--org", "Org One"], "only apply with --create"),
+    ):
+        with pytest.raises(SystemExit):
+            main(argv, ENV, FakeGrist().transport)
+        assert message in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    ("argv", "answers"),
+    [
+        (["--create"], "y\nDoc\nn\nn\ny\n"),  # asks the workspace, then the rest
+        (["--create", "--yes"], "y\nDoc\nn\nn\n"),  # --yes still skips the confirmation
+    ],
+)
+def test_create_without_workspace_asks_for_it_in_a_terminal(monkeypatch, capsys, argv, answers):
     fake = FakeGrist()
-    assert guided(monkeypatch, fake, "1\n", tty=False) == 1
-    assert "--interactive needs a terminal" in capsys.readouterr().err
-    assert fake.writes == []
+    assert guided(monkeypatch, fake, answers, *argv, env=ENV_NO_DOC) == 0
+    assert "Use workspace 'Work'?" in capsys.readouterr().out
+    assert fake.created_docs == [(10, "Doc")]
 
 
-def test_interactive_cannot_be_combined_with_check(capsys):
-    with pytest.raises(SystemExit):
-        main(["--check", "--interactive"], ENV, FakeGrist().transport)
-    assert "--interactive" in capsys.readouterr().err
+def test_fully_specified_options_in_a_terminal_ask_nothing(monkeypatch, capsys):
+    fake = FakeGrist()
+    terminal(monkeypatch, Stdin("", tty=True))
+    assert main([*CREATE, "--yes"], ENV_NO_DOC, fake.transport) == 0
+    assert "BestYet setup" not in capsys.readouterr().out and fake.created_docs == [(10, "BestYet")]
+
+
+def test_a_lone_workspace_is_confirmed_not_assumed(monkeypatch, capsys):
+    fake = FakeGrist()
+    assert guided(monkeypatch, fake, "n\n") == 0
+    out = capsys.readouterr().out
+    assert "Use workspace 'Work'? [Y/n]" in out and "no other workspace" in out
+    assert fake.created_docs == [] and fake.writes == []
+
+
+def test_several_workspaces_are_listed_without_a_yes_no_question(monkeypatch, capsys):
+    fake = FakeGrist(workspaces={1: [{"id": 10, "name": "Work"}, {"id": 11, "name": "Home"}]})
+    assert guided(monkeypatch, fake, "2\n1\nDoc\nn\nn\ny\n") == 0
+    out = capsys.readouterr().out
+    assert "2. Home" in out and "Use workspace" not in out
+    assert fake.created_docs == [(11, "Doc")]
 
 
 # Documents already in the workspace, and duplicate names.
@@ -1514,7 +1556,7 @@ def test_guided_lists_the_workspace_documents_and_sets_up_the_chosen_one(monkeyp
     fake = full_fake()
     del fake.tables["Meets"]
     fake.workspaces = workspace_with("Alpha", "Beta")
-    assert guided(monkeypatch, fake, "1\n3\nn\nn\ny\n", env=ENV_NO_DOC) == 0  # Beta, no extras
+    assert guided(monkeypatch, fake, "y\n3\nn\nn\ny\n", env=ENV_NO_DOC) == 0  # Beta, no extras
     out = capsys.readouterr().out
     assert "1. Create a new document" in out and "2. Alpha" in out and "3. Beta" in out
     assert "GRIST_DOC_ID" not in out.split("Plan:")[0].split("2. Alpha")[1]  # not offered: unset
@@ -1525,14 +1567,14 @@ def test_guided_lists_the_workspace_documents_and_sets_up_the_chosen_one(monkeyp
 def test_guided_offers_the_grist_doc_id_document_last(monkeypatch, capsys):
     fake = FakeGrist()
     fake.workspaces = workspace_with("Alpha")
-    assert guided(monkeypatch, fake, "1\n1\nDoc\nn\nn\nn\n") == 0
+    assert guided(monkeypatch, fake, "y\n1\nDoc\nn\nn\nn\n") == 0
     assert "3. The document in GRIST_DOC_ID" in capsys.readouterr().out
 
 
 def test_guided_duplicate_name_a_no_asks_for_another_name(monkeypatch, capsys):
     fake = FakeGrist()
     fake.workspaces = workspace_with("My Doc")
-    answers = "1\n1\n  my doc \nn\nOther\nn\nn\ny\n"  # clash, no, another name, ...
+    answers = "y\n1\n  my doc \nn\nOther\nn\nn\ny\n"  # clash, no, another name, ...
     assert guided(monkeypatch, fake, answers, env=ENV_NO_DOC) == 0
     out = capsys.readouterr().out
     assert out.count("A document named 'My Doc' already exists in this workspace.") == 1
@@ -1543,7 +1585,7 @@ def test_guided_duplicate_name_a_no_asks_for_another_name(monkeypatch, capsys):
 def test_guided_duplicate_name_a_yes_sets_up_that_document(monkeypatch, capsys):
     fake = FakeGrist()
     fake.workspaces = workspace_with("My Doc")
-    assert guided(monkeypatch, fake, "1\n1\nmy doc\n\nn\nn\ny\n", env=ENV_NO_DOC) == 0
+    assert guided(monkeypatch, fake, "y\n1\nmy doc\n\nn\nn\ny\n", env=ENV_NO_DOC) == 0
     assert fake.created_docs == []  # never a second document
     assert set(fake.tables) >= {t.id for t in schema.TABLES}
     assert all("/api/docs/DOC0/" in path for _, path in fake.writes)
@@ -1552,8 +1594,8 @@ def test_guided_duplicate_name_a_yes_sets_up_that_document(monkeypatch, capsys):
 def test_guided_given_duplicate_name_stops_on_a_no(monkeypatch, capsys):
     fake = FakeGrist()
     fake.workspaces = workspace_with("My Doc")
-    argv = ("--create", "--workspace", "Work", "--name", "my doc")
-    assert guided(monkeypatch, fake, "n\n", *argv) == 0
+    argv = ("--create", "--name", "my doc")
+    assert guided(monkeypatch, fake, "y\nn\n", *argv) == 0
     assert "Nothing was changed" in capsys.readouterr().out
     assert fake.created_docs == [] and fake.writes == []
 
@@ -1672,12 +1714,6 @@ def test_existing_document_runs_do_not_look_at_workspaces(capsys):
 # Other guided-mode and wording fixes.
 
 
-def test_interactive_cannot_be_combined_with_yes(capsys):
-    with pytest.raises(SystemExit):
-        main(["--interactive", "--yes"], ENV, FakeGrist().transport)
-    assert "cannot be combined with --yes" in capsys.readouterr().err
-
-
 def test_applying_line_has_no_internal_step_count(capsys):
     assert run(FakeGrist(), *CREATE, env=ENV_NO_DOC) == 0
     out = capsys.readouterr().out
@@ -1689,9 +1725,9 @@ def test_guided_org_alone_picks_from_that_organisation(monkeypatch, capsys):
         orgs=[{"id": 1, "name": "Org One"}, {"id": 2, "name": "Org Two"}],
         workspaces={1: [{"id": 10, "name": "Work"}], 2: [{"id": 20, "name": "Home"}]},
     )
-    assert guided(monkeypatch, fake, "1\n1\nDoc\nn\nn\ny\n", "--org", "Org Two") == 0
+    assert guided(monkeypatch, fake, "y\n1\nDoc\nn\nn\ny\n", "--org", "Org Two") == 0
     out = capsys.readouterr().out
-    assert "1. Home" in out and "Work" not in out
+    assert "Use workspace 'Home'?" in out and "Work" not in out
     assert fake.created_docs == [(20, "Doc")]
 
 
@@ -1704,12 +1740,12 @@ def test_guided_org_that_does_not_exist_says_so(monkeypatch, capsys):
 def test_guided_existing_document_with_other_tables_asks_up_front(monkeypatch, capsys):
     fake = full_fake({**full_tables(), "Notes": {"A": {"type": "Text"}}})
     del fake.tables["Meets"]
-    assert guided(monkeypatch, fake, "1\n2\ny\nn\nn\ny\n") == 0
+    assert guided(monkeypatch, fake, "y\n2\ny\nn\nn\ny\n") == 0
     out = capsys.readouterr().out
     assert "not part of BestYet (Notes)" in out and out.index("Notes") < out.index(
         "example implements"
     )
     assert "Meets" in fake.tables
     fake = full_fake({**full_tables(), "Notes": {"A": {"type": "Text"}}})
-    assert guided(monkeypatch, fake, "1\n2\nn\n") == 0
+    assert guided(monkeypatch, fake, "y\n2\nn\n") == 0
     assert "Nothing was changed" in capsys.readouterr().out and fake.writes == []

@@ -22,19 +22,25 @@ The goals for version 1 (see [Status and Limitations](#status-and-limitations) f
 
 ## Getting started
 
-Set up a Grist document with the init script (`GRIST_URL` and `GRIST_API_KEY` set, see [Configuration](#configuration)):
+Set up a Grist document with the init script, `bestyet-init`. It only ever adds what is missing (tables, columns, formulas, the personal-bests page, example data), so running it again is safe.
 
-```
-bestyet-init                                                         # in a terminal: asks what to set up
-bestyet-init --create --workspace "My Workspace" --name "BestYet"   # new document; prints its id and the GRIST_DOC_ID line to add
-bestyet-init --yes                                                   # existing document in GRIST_DOC_ID, without asking
-```
+- **Guided:** run `bestyet-init` with no options in a terminal. It asks what it needs (workspace, new or existing document, name, example data), shows the plan and asks before changing anything. It ends with a summary and, for a new document, the `GRIST_DOC_ID=...` line to add to your environment (the script saves nothing itself).
+- **With flags:** for scripts, containers and repeat runs. Without a terminal it never asks, so give every value as a flag.
 
-In a terminal, `bestyet-init` with no options (or with `--interactive`) asks in plain language: a new document or the existing one in `GRIST_DOC_ID`, which workspace (from a numbered list of those your key can see) and name for a new one, and whether to add the example implements and demo data. An option you give skips its question, and any option stops the automatic questions (use `--interactive` to ask anyway). Without a terminal it never asks: use the options. `--check`, `--dry-run` and `--yes` never ask questions (`--interactive` cannot be combined with `--check` or `--yes`). It never creates a second document with the same name in a workspace: it asks whether to set up the existing one instead (guided mode, or `--create` in a terminal), and refuses with `--yes` or without a terminal.
+| Flag | What it does | Default |
+| --- | --- | --- |
+| `--create` | Create a new document (needs `--workspace`; in a terminal it asks if missing) | off: set up the document in `GRIST_DOC_ID` |
+| `--workspace W` | Workspace id or name for the new document | none |
+| `--org O` | Organisation id or name, to narrow `--workspace` | all organisations |
+| `--name N` | Name of the new document; one that already exists in the workspace is never duplicated | `BestYet` |
+| `--seed-implements` | Also add the example implements (the example events are always added) | off |
+| `--demo-data` | Also load fictional athletes, meets and results; refused unless those tables are empty | off |
+| `--allow-existing-tables` | Add to a document that has tables of its own (a blank one made in Grist has an empty `Table1`; `--create` avoids this) | off: refused |
+| `-y`, `--yes` | Apply without asking (required without a terminal) | off: asks |
+| `--dry-run` | Show the plan and change nothing | off |
+| `--check` | Read-only: list every difference from the schema contract, or say it matches; exits non-zero on any difference. The app runs the same check at startup | off |
 
-It prints the whole plan (grouped: document, tables, calculated columns, personal bests, display, example data), then asks `Apply these changes? [y/N]` before changing anything, and ends with a summary of what it did and what to do next (after `--create`, the exact `GRIST_DOC_ID=...` line to add to your environment; the script saves nothing itself); `--yes` skips the prompt (required without a terminal), `--dry-run` only shows the plan. It only adds what is missing (tables, columns, the formulas and triggers, the personal-bests summary table on a `Personal bests` page, and names in Ref columns where unset), and a second run does nothing. With `--create` it also removes the empty `Table1` that Grist puts in every new document, but only if that table is untouched. A document with tables of its own is refused unless you pass `--allow-existing-tables`; this includes a blank document made in the Grist UI (it has an empty `Table1`), so use `--create` instead. It also adds the example events (matched by name; existing rows are never changed or duplicated). Pass `--seed-implements` to add the example implement rows too (matched by event and grade; both ignore case and spaces). The example implements are only examples: adjust them in Grist. Pass `--demo-data` to load a few fictional athletes, meets and results (plus the example events and implements they use); it refuses, writing nothing, unless Athletes, Meets and Results are all empty.
-
-To validate a document without changing it, run `bestyet-init --check` (uses `GRIST_DOC_ID`). It lists every difference from the schema contract by name (missing tables, columns, the summary table or the `Personal bests` page) with a count, or says the document matches, and exits non-zero on any difference. The app runs the same check at startup and refuses to start, with the same list, if the document does not match.
+Settings come from environment variables only: `GRIST_URL`, `GRIST_API_KEY` and `GRIST_DOC_ID` (not needed with `--create`); see [Configuration](#configuration).
 
 Once the project's container image exists (a later milestone), the same command can run as a one-off in it, with the settings passed as environment variables and nothing written to disk:
 
