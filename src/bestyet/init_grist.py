@@ -110,13 +110,19 @@ class AddColumns(Step):
         _check_ids(sent, client.add_columns(self.table, [column_payload(c) for c in self.columns]))
         if triggers:
             # A reference list is sent as ["L", ref, ...]; the column API wants it in an update.
-            client.update_columns(
-                self.table,
-                [
-                    {"id": c.id, "fields": {"recalcDeps": ["L", *(refs[d] for d in c.recalc_deps)]}}
-                    for c in triggers
-                ],
-            )
+            updates = [
+                {"id": c.id, "fields": {"recalcDeps": ["L", *(refs[d] for d in c.recalc_deps)]}}
+                for c in triggers
+            ]
+            try:
+                client.update_columns(self.table, updates)
+            except GristError as e:
+                names = ", ".join(f"{self.table}.{c.id}" for c in triggers)
+                raise InitError(
+                    f"{e}. Created without its trigger dependency: {names}. A re-run leaves "
+                    "existing columns alone: set the trigger columns in Grist, or remove them "
+                    "and re-run"
+                ) from None
 
 
 @dataclass(frozen=True)
@@ -183,7 +189,14 @@ class CreateSummaryPage(Step):
         group = [refs[g]["fields"]["colRef"] for g in s.group_by]
         result = client.apply([["CreateViewSection", table_ref, 0, "record", group, None]])
         view_ref = result["retValues"][0]["viewRef"]
-        client.apply([["UpdateRecord", "_grist_Views", view_ref, {"name": s.page}]])
+        try:
+            client.apply([["UpdateRecord", "_grist_Views", view_ref, {"name": s.page}]])
+        except GristError as e:
+            raise InitError(
+                f"{e}. A new page (view {view_ref}) was created but not named {s.page!r}; "
+                "rename it in Grist, or remove it, before re-running (a re-run would add "
+                "another page)"
+            ) from None
         if not any(t["id"] == s.id for t in client.tables()):
             raise InitError(f"Grist did not create {s.id}; the document needs a manual fix")
 

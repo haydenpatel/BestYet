@@ -670,3 +670,35 @@ def test_dry_run_and_nothing_to_do_never_prompt(monkeypatch, capsys):
     done = full_fake()
     assert run(done, yes=False) == 0
     assert "nothing to do" in capsys.readouterr().out
+
+
+def test_failed_page_rename_names_the_stray_page(capsys):
+    fake = FakeGrist()
+    orig = fake.handle
+
+    def handle(request):
+        # let CreateViewSection through, fail the rename that follows it
+        if b"_grist_Views" in request.content:
+            return httpx.Response(500, json={"error": "boom"})
+        return orig(request)
+
+    fake.transport = httpx.MockTransport(handle)
+    assert run(fake) == 1
+    err = capsys.readouterr().err
+    assert "was created but not named 'Personal bests'" in err and "view 1" in err
+    assert KEY not in err
+
+
+def test_failed_trigger_update_names_the_columns(capsys):
+    fake = FakeGrist()
+    orig = fake.handle
+
+    def handle(request):
+        if request.method == "PATCH" and b"recalcDeps" in request.content:
+            return httpx.Response(500, json={"error": "boom"})
+        return orig(request)
+
+    fake.transport = httpx.MockTransport(handle)
+    assert run(fake) == 1
+    err = capsys.readouterr().err
+    assert "Results.Grade, Results.Implement" in err and "re-run leaves" in err
