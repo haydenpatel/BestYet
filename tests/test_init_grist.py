@@ -1529,21 +1529,24 @@ def test_guided_offers_the_grist_doc_id_document_last(monkeypatch, capsys):
     assert "3. The document in GRIST_DOC_ID" in capsys.readouterr().out
 
 
-def test_guided_duplicate_name_asks_and_a_no_asks_for_another_name(monkeypatch, capsys):
+def test_guided_duplicate_name_a_no_asks_for_another_name(monkeypatch, capsys):
     fake = FakeGrist()
     fake.workspaces = workspace_with("My Doc")
     answers = "1\n1\n  my doc \nn\nOther\nn\nn\ny\n"  # clash, no, another name, ...
     assert guided(monkeypatch, fake, answers, env=ENV_NO_DOC) == 0
     out = capsys.readouterr().out
-    assert out.count("A document with that name already exists here.") == 1
-    assert "DOC0" not in out and fake.created_docs == [(10, "Other")]
+    assert out.count("A document named 'My Doc' already exists in this workspace.") == 1
+    assert "Use it instead? [Y/n]" in out and "DOC0" not in out
+    assert fake.created_docs == [(10, "Other")]
 
 
-def test_guided_duplicate_name_can_be_created_after_a_yes(monkeypatch, capsys):
+def test_guided_duplicate_name_a_yes_sets_up_that_document(monkeypatch, capsys):
     fake = FakeGrist()
     fake.workspaces = workspace_with("My Doc")
-    assert guided(monkeypatch, fake, "1\n1\nMy Doc\ny\nn\nn\ny\n", env=ENV_NO_DOC) == 0
-    assert fake.created_docs == [(10, "My Doc")]
+    assert guided(monkeypatch, fake, "1\n1\nmy doc\n\nn\nn\ny\n", env=ENV_NO_DOC) == 0
+    assert fake.created_docs == []  # never a second document
+    assert set(fake.tables) >= {t.id for t in schema.TABLES}
+    assert all("/api/docs/DOC0/" in path for _, path in fake.writes)
 
 
 def test_guided_given_duplicate_name_stops_on_a_no(monkeypatch, capsys):
@@ -1593,14 +1596,12 @@ def test_flag_form_asks_in_a_terminal(monkeypatch, capsys):
     monkeypatch.setattr(sys, "stdin", Stdin("n\n", tty=True))
     assert run(fake, *CREATE, env=ENV_NO_DOC, yes=False) == 0
     out = capsys.readouterr().out
-    assert "Create another with the same name? [y/N]" in out and "Nothing was changed" in out
-    assert fake.created_docs == []
-    monkeypatch.setattr(sys, "stdin", Stdin("y\nn\n", tty=True))  # yes here, no at the plan
+    assert "Use it instead? [Y/n]" in out and "Nothing was changed" in out
+    assert fake.created_docs == [] and fake.writes == []
+    monkeypatch.setattr(sys, "stdin", Stdin("y\ny\n", tty=True))  # use it, apply
     assert run(fake, *CREATE, env=ENV_NO_DOC, yes=False) == 0
-    assert "Apply these changes?" in capsys.readouterr().out and fake.created_docs == []
-    monkeypatch.setattr(sys, "stdin", Stdin("y\ny\n", tty=True))
-    assert run(fake, *CREATE, env=ENV_NO_DOC, yes=False) == 0
-    assert fake.created_docs == [(10, "BestYet")]
+    assert fake.created_docs == []  # never a second document
+    assert fake.writes and all("/api/docs/DOC0/" in path for _, path in fake.writes)
 
 
 def test_flag_form_end_of_input_at_the_duplicate_question_creates_nothing(monkeypatch, capsys):
@@ -1611,12 +1612,22 @@ def test_flag_form_end_of_input_at_the_duplicate_question_creates_nothing(monkey
     assert fake.created_docs == [] and fake.writes == []
 
 
-def test_dry_run_warns_about_a_duplicate_and_changes_nothing(capsys):
+def test_dry_run_in_a_terminal_shows_the_plan_for_using_the_existing_document(monkeypatch, capsys):
     fake = FakeGrist()
     fake.workspaces = workspace_with("BestYet")
-    assert run(fake, *CREATE, "--dry-run", env=ENV_NO_DOC) == 0
+    monkeypatch.setattr(sys, "stdin", Stdin("", tty=True))
+    assert run(fake, *CREATE, "--dry-run", env=ENV_NO_DOC, yes=False) == 0
     out = capsys.readouterr().out
-    assert "Warning: A document named 'BestYet' already exists" in out and "Plan:" in out
+    assert "already exists in workspace 'Work'" in out and "asks whether to use it" in out
+    assert "Create 'BestYet'" not in out and "Plan:" in out
+    assert fake.created_docs == [] and fake.writes == []
+
+
+def test_dry_run_that_a_real_run_would_refuse_is_refused(capsys):
+    fake = FakeGrist()
+    fake.workspaces = workspace_with("BestYet")
+    assert run(fake, *CREATE, "--dry-run", env=ENV_NO_DOC) == 1  # --yes: no switching unseen
+    assert "already exists" in capsys.readouterr().err
     assert fake.created_docs == [] and fake.writes == []
 
 

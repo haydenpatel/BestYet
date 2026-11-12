@@ -772,13 +772,13 @@ def _print_groups(groups: Sequence[tuple[str, Sequence[str]]], out) -> None:
 
 
 class NameTaken(InitError):
-    """A document with that name already exists in the workspace (only an explicit yes in a
-    terminal creates another)."""
+    """A document with that name already exists in the workspace. A second one is never
+    created; an interactive yes sets the existing one up instead."""
 
     def __init__(self, existing: str, label: str):
         super().__init__(
-            f"A document named {existing!r} already exists in {label}. "
-            "Pick another name with --name."
+            f"A document named {existing!r} already exists in {label}. Pick another name with "
+            "--name, or run without --create using GRIST_DOC_ID to set that one up."
         )
         self.existing, self.label = existing, label
 
@@ -792,16 +792,12 @@ def existing_docs(client: GristClient, workspace_id: int) -> list[dict]:
     return list(client.workspace(workspace_id).get("docs", []))
 
 
-def name_clash(client: GristClient, workspace_id: int, name: str) -> str | None:
-    """The name of a document in the workspace that has this name (ignoring case and
-    surrounding spaces), if any."""
+def name_clash(client: GristClient, workspace_id: int, name: str) -> dict | None:
+    """The document in the workspace that has this name (ignoring case and surrounding
+    spaces), if any."""
     wanted = name.strip().casefold()
     return next(
-        (
-            d["name"]
-            for d in existing_docs(client, workspace_id)
-            if d["name"].strip().casefold() == wanted
-        ),
+        (d for d in existing_docs(client, workspace_id) if d["name"].strip().casefold() == wanted),
         None,
     )
 
@@ -894,7 +890,7 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
             "refused unless Athletes, Meets and Results are all empty"
         ),
     )
-    p.set_defaults(duplicate_ok=False, doc_id=None)  # set by the questions, not by flags
+    p.set_defaults(doc_id=None)  # set by the questions, not by flags
     args = p.parse_args(argv)
     if args.check:
         used = [
@@ -1108,25 +1104,26 @@ def guide(args: argparse.Namespace, config: Config, client_for, out, stdin) -> b
                 create = pick == 0
                 if 0 < pick <= len(docs):
                     doc_id = docs[pick - 1]["id"]
-        args.create = create
         if create:
             while True:
                 given = bool(args.name)
                 name = args.name or _ask(out, "Name for the new document [BestYet]: ", stdin)
                 args.name = name or "BestYet"
-                if not name_clash(admin, ws_id, args.name):
+                clash = name_clash(admin, ws_id, args.name)
+                if not clash:
                     break
                 question = (
-                    "A document with that name already exists here. "
-                    "Create another with the same name?"
+                    f"A document named {clash['name']!r} already exists in this workspace. "
+                    "Use it instead?"
                 )
-                if _ask_yes_no(out, question, stdin):
-                    args.duplicate_ok = True
+                if _ask_yes_no(out, question, stdin, default=True):
+                    create, doc_id = False, clash["id"]  # set that one up (it only adds)
                     break
                 if given:
                     print("Nothing was changed.", file=out)
                     return False
                 args.name = None
+        args.create = create
     demo_allowed = True
     if not create:
         args.doc_id = doc_id
@@ -1207,30 +1204,31 @@ def run(
         f"Remove Grist's empty default table ({DEFAULT_TABLE}), if it is untouched",
     ]
     with _explaining(config, "workspace"), client_for("") as admin:
-        clash = None if args.duplicate_ok else name_clash(admin, workspace_id, args.name)
+        clash = name_clash(admin, workspace_id, args.name)
     if clash:
-        taken = f"A document named {clash!r} already exists in {workspace_label}."
+        taken = f"A document named {clash['name']!r} already exists in {workspace_label}."
+        if args.yes or not _tty(sys.stdin):  # never switch to an existing document unseen
+            raise NameTaken(clash["name"], workspace_label)
         if args.dry_run:
             print(
-                f"Warning: {taken} A real run asks before creating another one, and refuses "
-                "with --yes or without a terminal.",
+                f"{taken} A real run asks whether to use it instead; this is the plan for that.\n",
                 file=out,
             )
-        elif args.yes or not _tty(sys.stdin):
-            raise NameTaken(clash, workspace_label)
-        elif _ask_yes_no(out, f"{taken} Create another with the same name?", sys.stdin):
-            args.duplicate_ok = True
-        else:
+        elif not _ask_yes_no(out, f"{taken} Use it instead?", sys.stdin, default=True):
             print("Nothing was changed.", file=out)
             return
+        config = replace(config, grist_doc_id=clash["id"])
+        with _explaining(config, "document"), client_for(config.grist_doc_id) as client:
+            _set_up_existing(client, config, args, out)
+        return
     # A new document is empty apart from that default table, so the plan is the full contract.
     plan = build_plan({}, seed_implements=args.seed_implements, demo_data=args.demo_data)
     if not _show_plan(plan, lead, args, out) or args.dry_run or not _confirm(args, out):
         return
     with _explaining(config, "workspace"), client_for("") as admin:
         # Re-check right before creating: the workspace can change after the first look.
-        if not args.duplicate_ok and (clash := name_clash(admin, workspace_id, args.name)):
-            raise NameTaken(clash, workspace_label)
+        if clash := name_clash(admin, workspace_id, args.name):
+            raise NameTaken(clash["name"], workspace_label)
         doc_id = admin.create_doc(workspace_id, args.name)
     print(f"Created document {args.name!r} (id {doc_id}).", file=out)
     done = [f"Created document {args.name!r} (id {doc_id})"]
