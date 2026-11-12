@@ -74,19 +74,21 @@ class PartialFailure(InitError):
     def report(self, config: Config, fix: str) -> str:
         reason = explain(self.error, config, "document") if self.rerun_safe else str(self.error)
         lines = [reason, "The run stopped part-way."]
-        done = ([("Document", self.done)] if self.done else []) + grouped(self.applied, past=True)
+        done = ([("Document", self.done)] if self.done else []) + grouped(
+            self.applied, past=True, hidden=True
+        )
         lines.append("Done before the failure:" + ("" if done else " nothing"))
         lines += group_lines(done)
         lines.append("Failed (may be partly applied):")
-        lines += group_lines(grouped(self.pending[:1]))
+        lines += group_lines(grouped(self.pending[:1], hidden=True))
         if rest := self.pending[1:]:
             lines.append("Not done:")
-            lines += group_lines(grouped(rest))
+            lines += group_lines(grouped(rest, hidden=True))
         if self.attention:
             lines.append("Needs attention:")
             lines += [f"  - {a}" for a in self.attention]
         if fix:
-            lines.append(fix)
+            lines += ["Next steps:", f"  {fix}"]
         return "\n".join(lines)
 
 
@@ -699,12 +701,18 @@ def _plan_summary(
 
 # Plan and summary text: what the user cares about, grouped, not one line per internal step.
 
-GROUPS = ("Tables", "Calculated columns", "Personal bests", "Display", "Example data")
+GROUPS = ("Tables", "Calculated columns", "Personal bests", "Display", "Example data", "Other")
 
 
-def grouped(steps: Sequence[Step], past: bool = False) -> list[tuple[str, list[str]]]:
-    """Group steps by outcome, in plain words. `past`: for the summary of what was done."""
+def grouped(
+    steps: Sequence[Step], past: bool = False, hidden: bool = False
+) -> list[tuple[str, list[str]]]:
+    """Group steps by outcome, in plain words. `past`: what was done, not what will be.
+
+    The behind-the-scenes steps (calculated columns, names shown in Ref columns) are left
+    out unless `hidden`: the plan does not mention them, but a failure report must."""
     out: dict[str, list[str]] = {g: [] for g in GROUPS}
+    behind_the_scenes = False
     page_made = any(isinstance(s, CreateSummaryPage) for s in steps)
     new = [s.table.id for s in steps if isinstance(s, CreateTable)]
     if new:
@@ -720,6 +728,8 @@ def grouped(steps: Sequence[Step], past: bool = False) -> list[tuple[str, list[s
         elif isinstance(s, AddColumns) and s.columns[0].formula is None:
             verb = "Added columns to" if past else "Add missing columns to"
             out["Tables"].append(f"{verb} {s.table}: {s._names()}")
+        elif isinstance(s, AddColumns) and not hidden:
+            behind_the_scenes = True
         elif isinstance(s, AddColumns):
             worked = [c.id for c in s.columns if c.is_formula]
             filled = [c.id for c in s.columns if not c.is_formula]
@@ -734,6 +744,8 @@ def grouped(steps: Sequence[Step], past: bool = False) -> list[tuple[str, list[s
             out["Personal bests"].append(
                 f"{verb} a {s.summary.page!r} page showing each athlete's best per event"
             )
+        elif isinstance(s, SetVisibleCols) and not hidden:
+            behind_the_scenes = True
         elif isinstance(s, SetVisibleCols) and not out["Display"]:
             out["Display"].append(
                 "Set Ref columns to show names instead of ids"
@@ -752,7 +764,41 @@ def grouped(steps: Sequence[Step], past: bool = False) -> list[tuple[str, list[s
             )
     if example:
         out["Example data"].append(", ".join(example))
+    if behind_the_scenes and not any(out.values()):
+        out["Other"].append("Update the existing tables (calculated columns, names in Ref columns)")
     return [(g, lines) for g, lines in out.items() if lines]
+
+
+def _and(items: Sequence[str]) -> str:
+    return items[0] if len(items) == 1 else f"{', '.join(items[:-1])} and {items[-1]}"
+
+
+def done_message(applied: Sequence[Step], doc: tuple[str, str] | None) -> str:
+    """One plain sentence for a run that went as planned. `doc`: (name, workspace label) of
+    the document this run created."""
+    tables = [s.table.id for s in applied if isinstance(s, CreateTable)]
+    pages = [s.summary.page for s in applied if isinstance(s, CreateSummaryPage)]
+    columns = [
+        s.table
+        for s in applied
+        if isinstance(s, AddColumns)
+        and s.table != schema.SUMMARY.id
+        and s.columns[0].formula is None
+    ]
+    example = any(isinstance(s, (SeedEvents, SeedImplements, LoadDemoData)) for s in applied)
+    if doc:
+        parts = [f"{len(tables)} tables"] if tables else []
+        parts += [f"the {p!r} page" for p in pages]
+        parts += ["example data"] if example else []
+        with_ = f" with {_and(parts)}" if parts else ""
+        return f"Done. Created {doc[0]!r} in {doc[1]}{with_}."
+    parts = [f"tables {', '.join(tables)}"] if tables else []
+    parts += [f"missing columns in {', '.join(columns)}"] if columns else []
+    parts += [f"the {p!r} page" for p in pages]
+    parts += ["example data"] if example else []
+    if not parts:
+        parts = ["the missing behind-the-scenes parts"]
+    return f"Done. Added {_and(parts)}."
 
 
 def group_lines(groups: Sequence[tuple[str, Sequence[str]]]) -> list[str]:
@@ -761,6 +807,11 @@ def group_lines(groups: Sequence[tuple[str, Sequence[str]]]) -> list[str]:
         lines.append(f"  {heading}")
         lines += [f"    - {item}" for item in items]
     return lines
+
+
+def _section(out, title: str) -> None:
+    """A heading that separates the parts of a run (plain text, readable in a log)."""
+    print(f"\n--- {title} ---", file=out)
 
 
 def _print_groups(groups: Sequence[tuple[str, Sequence[str]]], out) -> None:
@@ -1049,6 +1100,22 @@ def _ask_choice(out, question: str, options: Sequence[str], stdin) -> int:
         print(f"Please enter a number from 1 to {len(options)}.", file=out)
 
 
+def _ask_existing(out, question: str, options: Sequence[str], stdin) -> int | None:
+    """Numbered existing documents, or C to create a new one. Returns the 0-based index of
+    the chosen document, or None to create a new one."""
+    print(question, file=out)
+    for i, option in enumerate(options, 1):
+        print(f"  {i}. {option}", file=out)
+    while True:
+        prompt = f"Enter a number (1-{len(options)}), or C to create a new document: "
+        answer = _ask(out, prompt, stdin)
+        if answer.lower() in ("c", "create"):
+            return None
+        if answer.isascii() and answer.isdigit() and 1 <= int(answer) <= len(options):
+            return int(answer) - 1
+        print(f"Please enter a number from 1 to {len(options)}, or C.", file=out)
+
+
 def _choose_workspace(client: GristClient, org: str | None, out, stdin) -> str | None:
     """Offer the workspaces the key can see; returns the chosen id as a string, or None when
     the only one visible is declined. A lone workspace is never taken silently."""
@@ -1081,8 +1148,9 @@ def guide(args: argparse.Namespace, config: Config, client_for, out, stdin) -> b
     """Ask what to set up and fill in `args`. Returns False when the user chose to stop.
 
     A flag that is already given skips its question. Nothing is changed here."""
-    confirm = "" if args.yes else "; nothing is changed until you confirm the plan"
-    print(f"BestYet setup: a few questions first{confirm}.\n", file=out)
+    _section(out, "Questions")
+    if not args.yes:
+        print("Nothing is changed until you confirm the plan.\n", file=out)
     doc_id = config.grist_doc_id
     create = args.create
     with _explaining(config, "workspace"), client_for("") as admin:
@@ -1090,24 +1158,26 @@ def guide(args: argparse.Namespace, config: Config, client_for, out, stdin) -> b
             args.workspace = _choose_workspace(admin, args.org, out, stdin)
             if args.workspace is None:
                 print(
-                    "There is no other workspace visible to this API key. Nothing was changed.",
+                    "There is no other workspace visible to this API key. Create one in Grist, then run "
+                    "this again. Nothing was changed.",
                     file=out,
                 )
                 return False
         ws_id, label = resolve_workspace_label(admin, args.workspace, args.org)
         if not create:  # which document: one that is already there, or a new one
             docs = existing_docs(admin, ws_id)
-            options = ["Create a new document", *(d["name"] for d in docs)]
+            labels = [d["name"] for d in docs]
             if doc_id:
-                options.append("The document in GRIST_DOC_ID")
-            if len(options) == 1:
-                print(f"There are no documents in {label} yet; creating a new one.", file=out)
+                labels.append("The document in GRIST_DOC_ID")
+            if not labels:
                 create = True
             else:
-                pick = _ask_choice(out, f"What should be set up in {label}?", options, stdin)
-                create = pick == 0
-                if 0 < pick <= len(docs):
-                    doc_id = docs[pick - 1]["id"]
+                pick = _ask_existing(
+                    out, f"Do you want to use an existing document in {label}?", labels, stdin
+                )
+                create = pick is None
+                if pick is not None and pick < len(docs):
+                    doc_id = docs[pick]["id"]  # else: the GRIST_DOC_ID document
         if create:
             while True:
                 given = bool(args.name)
@@ -1153,7 +1223,6 @@ def guide(args: argparse.Namespace, config: Config, client_for, out, stdin) -> b
         args.demo_data = _ask_yes_no(
             out, "Add demo data (a few fictional athletes, meets and results)?", stdin
         )
-    print(file=out)
     return True
 
 
@@ -1199,10 +1268,7 @@ def run(
 
     with _explaining(config, "workspace"), client_for("") as admin:
         workspace_id, workspace_label = resolve_workspace_label(admin, args.workspace, args.org)
-    lead = [
-        f"Create {args.name!r} in {workspace_label}",
-        f"Remove Grist's empty default table ({DEFAULT_TABLE}), if it is untouched",
-    ]
+    lead = [f"Create {args.name!r} in {workspace_label}"]
     with _explaining(config, "workspace"), client_for("") as admin:
         clash = name_clash(admin, workspace_id, args.name)
     if clash:
@@ -1230,14 +1296,24 @@ def run(
         if clash := name_clash(admin, workspace_id, args.name):
             raise NameTaken(clash["name"], workspace_label)
         doc_id = admin.create_doc(workspace_id, args.name)
-    print(f"Created document {args.name!r} (id {doc_id}).", file=out)
+    _section(out, "Applying")
+    print(f"Created the document {args.name!r} (id {doc_id}).", file=out)
     done = [f"Created document {args.name!r} (id {doc_id})"]
     try:
         with client_for(doc_id) as client:
             removed, warning = remove_default_table(client)
             if removed:
                 done.append(f"Removed Grist's empty default table ({DEFAULT_TABLE})")
-            _apply(plan, client, [warning] if warning else [], args, out, done, doc_id)
+            _apply(
+                plan,
+                client,
+                [warning] if warning else [],
+                args,
+                out,
+                done,
+                doc_id,
+                doc=(args.name, workspace_label),
+            )
     except PartialFailure as e:
         hint = rerun_hint(doc_id) if e.rerun_safe else continue_hint(doc_id)
         raise InitError(e.report(config, hint)) from None
@@ -1314,7 +1390,7 @@ def _show_plan(plan: Plan, lead: Sequence[str], args: argparse.Namespace, out) -
             file=out,
         )
         return False
-    print("Plan:", file=out)
+    _section(out, "Plan")
     _print_groups([("Document", lead)] if lead else [], out)
     _print_groups(grouped(plan.steps), out)
     if args.dry_run:
@@ -1353,10 +1429,13 @@ def _apply(
     out,
     done: Sequence[str] = (),
     doc_id: str | None = None,
+    doc: tuple[str, str] | None = None,
 ) -> None:
-    """Apply the steps. `done` holds what was already done in this run (the document)."""
+    """Apply the steps. `done` holds what was already done in this run (the document);
+    `doc` is the (name, workspace) of a document this run created."""
     applied: list[Step] = []
-    print("Applying the plan...", file=out)
+    if doc is None:
+        _section(out, "Applying")
     for i, step in enumerate(plan.steps):
         try:
             step.apply(client)
@@ -1364,7 +1443,7 @@ def _apply(
             attention = [f"{w}. To fix: {next_step(args.allow_existing_tables)}" for w in warnings]
             raise PartialFailure(done, applied, plan.steps[i:], e, attention) from None
         applied.append(step)
-    _finish(plan, warnings, args, out, done, doc_id, applied)
+    _finish(plan, warnings, args, out, doc_id, applied, doc)
 
 
 def _finish(
@@ -1372,24 +1451,16 @@ def _finish(
     warnings: Sequence[str],
     args: argparse.Namespace,
     out,
-    done: Sequence[str] = (),
     doc_id: str | None = None,
     applied: Sequence[Step] | None = None,
+    doc: tuple[str, str] | None = None,
 ) -> None:
-    """Print the closing summary (after a run that applied changes), warnings and next steps.
+    """Print the closing message (after a run that applied changes), warnings and next steps.
 
-    `done` is what was done outside the plan steps (the document); `applied` is None when
-    nothing was applied (dry run, declined, nothing to do)."""
+    `applied` is None when nothing was applied (dry run, declined, nothing to do)."""
     if applied is not None:
-        print("\nSummary", file=out)
-        groups = ([("Document", done)] if done else []) + grouped(applied, past=True)
-        if groups:
-            _print_groups(groups, out)
-        else:
-            print("  Nothing was changed", file=out)
-        if unchanged := plan.unchanged():
-            names = ["the personal bests table" if t == schema.SUMMARY.id else t for t in unchanged]
-            print(f"  Already there, unchanged: {', '.join(names)}", file=out)
+        _section(out, "Done")
+        print(done_message(applied, doc), file=out)
     if warnings:
         print("Needs attention:", file=out)
         for w in warnings:
@@ -1400,16 +1471,18 @@ def _finish(
             "(listed above). Fix them in Grist, then re-run."
         )
     if applied is not None:
-        print("\nNext steps", file=out)
+        _section(out, "Next steps")
+        check = "run bestyet-init --check to confirm the document matches the contract."
         if doc_id:
             print(
-                "  - Add this line to your environment or .env (this script saved nothing):",
+                "  1. Add this line to your settings (environment or .env); this script saved "
+                "nothing:",
                 file=out,
             )
-            print(f"      GRIST_DOC_ID={doc_id}", file=out)
-        print(
-            "  - Run bestyet-init --check to confirm the document matches the contract.", file=out
-        )
+            print(f"       GRIST_DOC_ID={doc_id}", file=out)
+            print(f"  2. Then {check}", file=out)
+        else:
+            print(f"  - {check[0].upper()}{check[1:]}", file=out)
 
 
 def main(
