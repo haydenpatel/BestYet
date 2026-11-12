@@ -40,6 +40,11 @@ def removals(fake):
 
 def full_fake(tables=None):
     fake = FakeGrist(tables if tables is not None else full_tables())
+    if "Events" in fake.tables:  # a fully initialised document has its example Events
+        fake.rows["Events"] = [
+            {"id": i, "fields": {"Name": n, "Kind": k}}
+            for i, (n, k) in enumerate(schema.EXAMPLE_EVENTS, 1)
+        ]
     fake.summary_tables.add(schema.SUMMARY.id)
     fake.views[1] = schema.SUMMARY.page
     return fake
@@ -88,7 +93,104 @@ def test_fresh_doc_gets_the_whole_contract(capsys):
     assert fake.tables["Results"]["Athlete"]["type"] == "Ref:Athletes"
     assert fake.tables["Meets"]["Date"] == {"type": "Date"}
     out = capsys.readouterr().out
-    assert "not handled by this script yet: seed rows" in out
+    assert "not handled by this script yet: demo data" in out
+    assert "seed rows" not in out
+
+
+def event_names(fake):
+    return [r["fields"]["Name"] for r in fake.rows.get("Events", [])]
+
+
+def test_fresh_doc_seeds_events_only_by_default():
+    fake = FakeGrist()
+    assert run(fake) == 0
+    assert [(r["fields"]["Name"], r["fields"]["Kind"]) for r in fake.rows["Events"]] == list(
+        schema.EXAMPLE_EVENTS
+    )
+    assert "Implements" not in fake.rows
+
+
+def test_seed_implements_resolves_event_ids():
+    fake = FakeGrist()
+    assert run(fake, "--seed-implements") == 0
+    ids = {r["fields"]["Name"]: r["id"] for r in fake.rows["Events"]}
+    got = [
+        (r["fields"]["Event"], r["fields"]["Grade"], r["fields"]["Weight"])
+        for r in fake.rows["Implements"]
+    ]
+    assert got == [(ids[e], g, w) for e, g, w in schema.EXAMPLE_IMPLEMENTS]
+
+
+def test_seeding_twice_changes_nothing(capsys):
+    fake = FakeGrist()
+    assert run(fake, "--seed-implements") == 0
+    before = json.dumps(fake.rows)
+    fake.writes.clear()
+    capsys.readouterr()
+    assert run(fake, "--seed-implements") == 0
+    assert fake.writes == [] and json.dumps(fake.rows) == before
+    assert "nothing to do" in capsys.readouterr().out
+
+
+def test_existing_rows_are_kept_and_not_duplicated(capsys):
+    fake = full_fake()
+    fake.rows["Events"] = [
+        {"id": 7, "fields": {"Name": "Discus", "Kind": "Time"}},  # differs: left alone
+        {"id": 9, "fields": {"Name": "My Event", "Kind": "Time"}},
+    ]
+    fake.rows["Implements"] = [
+        {"id": 1, "fields": {"Event": 7, "Grade": "Grade 8", "Weight": "999g"}},
+        {"id": 2, "fields": {"Event": 9, "Grade": "Grade 9", "Weight": "1kg"}},
+    ]
+    assert run(fake, "--seed-implements") == 0
+    names = event_names(fake)
+    assert names.count("Discus") == 1 and "My Event" in names
+    assert len(names) == len(schema.EXAMPLE_EVENTS) + 1
+    assert fake.rows["Events"][0]["fields"]["Kind"] == "Time"
+    imps = [
+        (r["fields"]["Event"], r["fields"]["Grade"], r["fields"]["Weight"])
+        for r in fake.rows["Implements"]
+    ]
+    assert imps[:2] == [(7, "Grade 8", "999g"), (9, "Grade 9", "1kg")]
+    assert (7, "Grade 8", "500g") not in imps and (7, "Grade 9", "500g") in imps
+    assert len(imps) == 2 + len(schema.EXAMPLE_IMPLEMENTS) - 1
+
+
+def test_implements_not_seeded_without_the_flag():
+    fake = full_fake()
+    assert run(fake) == 0
+    assert fake.writes == []
+
+
+def test_seed_implements_on_complete_events_adds_only_implements():
+    fake = full_fake()
+    fake.rows["Events"] = [
+        {"id": i, "fields": {"Name": n}} for i, (n, _) in enumerate(schema.EXAMPLE_EVENTS, 1)
+    ]
+    assert run(fake, "--seed-implements") == 0
+    assert fake.writes == [("POST", "/api/docs/DOC_ID_HERE/tables/Implements/records")]
+
+
+def test_dry_run_lists_seed_steps_and_writes_nothing(capsys):
+    fake = full_fake()
+    fake.rows["Events"] = []
+    assert run(fake, "--dry-run", "--seed-implements") == 0
+    out = capsys.readouterr().out
+    assert "add example Events rows" in out and "add example Implements rows" in out
+    assert fake.writes == []
+
+
+def test_seed_prompt_declined_writes_nothing(monkeypatch):
+    monkeypatch.setattr(sys, "stdin", Stdin("n\n"))
+    fake = full_fake()
+    assert run(fake, "--seed-implements", yes=False) == 0
+    assert fake.writes == []
+
+
+def test_seed_implements_not_allowed_with_check(capsys):
+    with pytest.raises(SystemExit):
+        main(["--check", "--seed-implements"], ENV, FakeGrist().transport)
+    assert "--seed-implements" in capsys.readouterr().err
 
 
 def test_formula_and_trigger_columns_carry_their_settings():

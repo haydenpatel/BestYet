@@ -10,8 +10,12 @@ after confirmation (``--yes`` skips the prompt; without a terminal ``--yes`` or 
 is required). ``--check`` instead reads the document (GET only), reports every difference from
 the contract (``bestyet.check``, also run by the app at startup) and exits non-zero on any.
 
+Seed rows are plan steps too: the example Events always, the example Implements only with
+``--seed-implements``. They only add rows that are missing (Events matched by Name,
+Implements by Event and Grade); an existing row is never changed or duplicated.
+
 The plan is a list of small steps, each with ``describe()`` and ``apply(client)``, so later
-work (seed rows) adds step types and extends ``build_plan`` without touching the CLI.
+work (demo data) adds step types and extends ``build_plan`` without touching the CLI.
 """
 
 import argparse
@@ -203,6 +207,57 @@ class CreateSummaryPage(Step):
             raise InitError(f"Grist did not create {s.id}; the document needs a manual fix")
 
 
+def _event_names(events: Sequence[Mapping]) -> dict[int, str]:
+    """Events row id -> Name."""
+    return {r["id"]: r["fields"].get("Name") for r in events}
+
+
+def _missing_events(events: Sequence[Mapping]) -> tuple[tuple[str, str], ...]:
+    have = set(_event_names(events).values())
+    return tuple(e for e in schema.EXAMPLE_EVENTS if e[0] not in have)
+
+
+def _missing_implements(
+    events: Sequence[Mapping], implements: Sequence[Mapping]
+) -> tuple[tuple[str, str, str], ...]:
+    names = _event_names(events)
+    have = {(names.get(r["fields"].get("Event")), r["fields"].get("Grade")) for r in implements}
+    return tuple(i for i in schema.EXAMPLE_IMPLEMENTS if (i[0], i[1]) not in have)
+
+
+@dataclass(frozen=True)
+class SeedEvents(Step):
+    """Add the example Events whose Name is not there yet."""
+
+    def describe(self) -> str:
+        return "add example Events rows (those whose Name is missing)"
+
+    def apply(self, client: GristClient) -> None:
+        # Re-read: the plan was shown before confirmation, and Grist can be edited meanwhile.
+        if rows := _missing_events(client.records("Events")):
+            client.add("Events", [{"Name": n, "Kind": k} for n, k in rows])
+
+
+@dataclass(frozen=True)
+class SeedImplements(Step):
+    """Add the example Implements whose Event and Grade pair is not there yet."""
+
+    def describe(self) -> str:
+        return "add example Implements rows (those whose Event and Grade are missing)"
+
+    def apply(self, client: GristClient) -> None:
+        events = client.records("Events")
+        rows = _missing_implements(events, client.records("Implements"))
+        ids = {name: i for i, name in _event_names(events).items()}
+        add = []
+        for event, grade, weight in rows:
+            if event not in ids:
+                raise InitError(f"Events has no row named {event!r}; cannot add its Implements")
+            add.append({"Event": ids[event], "Grade": grade, "Weight": weight})
+        if add:
+            client.add("Implements", add)
+
+
 @dataclass
 class Plan:
     steps: list[Step] = field(default_factory=list)
@@ -211,7 +266,7 @@ class Plan:
 
 
 # Contract parts that later issues implement; named in the output so they are not silent.
-DEFERRED = ("seed rows",)
+DEFERRED = ("demo data",)
 
 
 def _is_plain(column: schema.Column) -> bool:
@@ -275,12 +330,17 @@ def build_plan(
     actual: Mapping[str, Mapping[str, Mapping]],
     pages: Collection[str] = (),
     summary_tables: Collection[str] = (),
+    events: Sequence[Mapping] | None = None,
+    implements: Sequence[Mapping] | None = None,
+    seed_implements: bool = False,
 ) -> Plan:
     """Diff the contract against `actual`; additions only.
 
     `actual` maps table id -> {column id: column fields} for the contract tables and the
     summary table that are in the document. `pages` are the page names that exist and
-    `summary_tables` the ids of real summary tables.
+    `summary_tables` the ids of real summary tables. `events` and `implements` are the
+    existing rows of those tables (None: the table does not exist yet). Missing example
+    Events are always planned, missing example Implements only if `seed_implements`.
 
     Grist keeps ids unique ignoring case, so ids are matched ignoring case. A case-only
     difference is never added or renamed: it is a conflict the owner must fix in Grist.
@@ -312,7 +372,20 @@ def build_plan(
     plan.steps.extend(visible_steps)
     if not plan.conflicts:
         _plan_summary(plan, actual, pages, summary_tables)
+    if not plan.conflicts:  # nothing is seeded into a document that needs a manual fix
+        _plan_seeds(plan, events or [], implements or [], seed_implements)
     return plan
+
+
+def _plan_seeds(
+    plan: Plan, events: Sequence[Mapping], implements: Sequence[Mapping], implements_too: bool
+) -> None:
+    missing_events = _missing_events(events)
+    if missing_events:
+        plan.steps.append(SeedEvents())
+    # The Events rows added above are new, so they cannot have Implements yet.
+    if implements_too and (missing_events or _missing_implements(events, implements)):
+        plan.steps.append(SeedImplements())
 
 
 def _plan_summary(
@@ -392,6 +465,11 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         help="read-only: report every difference from the contract, exit non-zero on any",
     )
     p.add_argument(
+        "--seed-implements",
+        action="store_true",
+        help="also add the example Implements rows (Events are always seeded); only adds",
+    )
+    p.add_argument(
         "--allow-existing-tables",
         action="store_true",
         help="proceed even if the document has tables that are not part of the contract",
@@ -408,6 +486,7 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
                 ("--workspace", args.workspace),
                 ("--org", args.org),
                 ("--dry-run", args.dry_run),
+                ("--seed-implements", args.seed_implements),
                 ("--allow-existing-tables", args.allow_existing_tables),
                 ("--yes", args.yes),
             )
@@ -519,7 +598,7 @@ def run(
         ),
     ]
     # A new document is empty apart from that default table, so the plan is the full contract.
-    plan = build_plan({})
+    plan = build_plan({}, seed_implements=args.seed_implements)
     if not _show_plan(plan, lead, args, out) or args.dry_run or not _confirm(args, out):
         return
     with client_for("") as admin:
@@ -561,7 +640,11 @@ def _set_up_existing(client: GristClient, args: argparse.Namespace, out) -> None
     present = contract_table_ids(tables)
     actual = {t: {c["id"]: c.get("fields", {}) for c in client.columns(t)} for t in present}
     summary_tables = [t["id"] for t in tables if t.get("fields", {}).get("summarySourceTable")]
-    plan = build_plan(actual, page_names(client), summary_tables)
+    events = client.records("Events") if "Events" in present else None
+    implements = client.records("Implements") if "Implements" in present else None
+    plan = build_plan(
+        actual, page_names(client), summary_tables, events, implements, args.seed_implements
+    )
     for w in warnings:
         print(f"warning: {w}", file=out)
     if not _show_plan(plan, [], args, out) or args.dry_run or not _confirm(args, out):

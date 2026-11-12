@@ -95,7 +95,16 @@ class FakeGrist:
                 json={"records": [{"id": i, "fields": {"name": n}} for i, n in self.views.items()]},
             )
         if m := re.fullmatch(r"tables/([^/]+)/records", rest):
-            if method != "GET" or m[1] not in self.tables:
+            if m[1] not in self.tables:
+                return httpx.Response(404, json={"error": "not found"})
+            if method == "POST":
+                rows = self.rows.setdefault(m[1], [])
+                added = []
+                for r in body["records"]:
+                    rows.append({"id": max((x["id"] for x in rows), default=0) + 1, **r})
+                    added.append({"id": rows[-1]["id"]})
+                return httpx.Response(200, json={"records": added})
+            if method != "GET":
                 return httpx.Response(404, json={"error": "not found"})
             return httpx.Response(200, json={"records": list(self.rows.get(m[1], []))})
         if rest == "tables" and method == "GET":
