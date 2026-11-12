@@ -814,7 +814,15 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     p.add_argument("--create", action="store_true", help="create a new empty document first")
     p.add_argument("--workspace", help="workspace id or name (with --create)")
     p.add_argument("--org", help="organisation id or name, to narrow --workspace")
-    p.add_argument("--name", default="BestYet", help="name of the new document (default BestYet)")
+    p.add_argument("--name", help="name of the new document (default BestYet)")
+    p.add_argument(
+        "--interactive",
+        action="store_true",
+        help=(
+            "ask questions (new or existing document, workspace, name, examples) instead of "
+            "needing flags; also the default in a terminal when no other flags are given"
+        ),
+    )
     p.add_argument("--dry-run", action="store_true", help="show the plan, change nothing")
     p.add_argument(
         "--check",
@@ -855,16 +863,34 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
                 ("--demo-data", args.demo_data),
                 ("--allow-existing-tables", args.allow_existing_tables),
                 ("--yes", args.yes),
+                ("--interactive", args.interactive),
             )
             if on
         ]
         if used:
             p.error(f"--check is read-only and cannot be combined with {', '.join(used)}")
-    if args.create and not args.workspace:
-        p.error("--create needs --workspace")
-    if not args.create and (args.workspace or args.org):
-        p.error("--workspace and --org only apply with --create")
+    if not args.interactive:  # the guided mode asks for what is missing
+        if args.create and not args.workspace:
+            p.error("--create needs --workspace")
+        if not args.create and (args.workspace or args.org):
+            p.error("--workspace and --org only apply with --create")
     return args
+
+
+def _tty(stream) -> bool:
+    isatty = getattr(stream, "isatty", None)
+    return bool(isatty and isatty())
+
+
+def wants_guided(args: argparse.Namespace, stdin, stdout) -> bool:
+    """Guided mode: asked for with --interactive, or a terminal and no other option at all."""
+    if args.interactive:
+        return True
+    others = (
+        args.create, args.workspace, args.org, args.name, args.dry_run, args.check,
+        args.seed_implements, args.allow_existing_tables, args.yes, args.demo_data,
+    )  # fmt: skip
+    return not any(others) and _tty(stdin) and _tty(stdout)
 
 
 DEFAULT_TABLE = "Table1"  # Grist puts an empty table with columns A, B, C in every new document
@@ -940,6 +966,119 @@ def not_created_warning() -> str:
     return f"{DEFAULT_TABLE} not removed: the document was not created by this run"
 
 
+ABORT = "aborted; nothing was changed"
+
+
+def _ask(out, prompt: str, stdin) -> str:
+    out.write(prompt)
+    out.flush()
+    try:
+        line = stdin.readline()
+    except KeyboardInterrupt:
+        print(file=out)
+        raise Interrupted(ABORT) from None
+    if not line:  # end of input
+        print(file=out)
+        raise Interrupted(ABORT)
+    return line.strip()
+
+
+def _ask_yes_no(out, question: str, stdin, default: bool = False) -> bool:
+    hint = "[Y/n]" if default else "[y/N]"
+    while True:
+        answer = _ask(out, f"{question} {hint} ", stdin).lower()
+        if not answer:
+            return default
+        if answer in ("y", "yes"):
+            return True
+        if answer in ("n", "no"):
+            return False
+        print("Please answer y or n.", file=out)
+
+
+def _ask_choice(out, question: str, options: Sequence[str], stdin) -> int:
+    """Numbered list; returns the 0-based index of the chosen option."""
+    print(question, file=out)
+    for i, option in enumerate(options, 1):
+        print(f"  {i}. {option}", file=out)
+    while True:
+        answer = _ask(out, f"Enter a number (1-{len(options)}): ", stdin)
+        if answer.isascii() and answer.isdigit() and 1 <= int(answer) <= len(options):
+            return int(answer) - 1
+        print(f"Please enter a number from 1 to {len(options)}.", file=out)
+
+
+def _choose_workspace(client: GristClient, org: str | None, out, stdin) -> str:
+    """Offer the workspaces the key can see; returns the chosen id as a string."""
+    orgs = client.orgs()
+    if org is not None:
+        orgs = [o for o in orgs if str(o["id"]) == org or o.get("name") == org]
+    several = len(orgs) > 1
+    found = [(o, w) for o in orgs for w in client.workspaces(o["id"])]
+    if not found:
+        raise InitError(
+            "The API key cannot see any workspace to put a document in. Check GRIST_API_KEY, "
+            "or ask for access to a workspace in Grist."
+        )
+    labels = []
+    for o, w in found:
+        label = str(w.get("name", w["id"]))
+        labels.append(f"{label} ({o.get('name', o['id'])})" if several else label)
+    question = "Which workspace should the new document go in?"
+    return str(found[_ask_choice(out, question, labels, stdin)][1]["id"])
+
+
+def guide(args: argparse.Namespace, config: Config, client_for, out, stdin) -> bool:
+    """Ask what to set up and fill in `args`. Returns False when the user chose to stop.
+
+    A flag that is already given skips its question. Nothing is changed here."""
+    print(
+        "BestYet setup: a few questions first; nothing is changed until you confirm the plan.\n",
+        file=out,
+    )
+    if args.workspace or args.org:
+        args.create = True  # naming a workspace means a new document
+    if not args.create:
+        if config.grist_doc_id:
+            kind = _ask_choice(
+                out,
+                "Set up a new document, or the existing one in GRIST_DOC_ID?",
+                ["A new document", "The existing document (GRIST_DOC_ID)"],
+                stdin,
+            )
+            args.create = kind == 0
+        else:
+            print(
+                "GRIST_DOC_ID is not set, so there is no existing document to set up. To use "
+                "one, set GRIST_DOC_ID to its id and run this again.",
+                file=out,
+            )
+            if not _ask_yes_no(out, "Create a new document instead?", stdin, default=True):
+                print("Nothing was changed.", file=out)
+                return False
+            args.create = True
+    demo_allowed = True
+    if args.create:
+        if not args.workspace:
+            with _explaining(config, "workspace"), client_for("") as admin:
+                args.workspace = _choose_workspace(admin, args.org, out, stdin)
+        if not args.name:
+            args.name = _ask(out, "Name for the new document [BestYet]: ", stdin) or "BestYet"
+    else:
+        with _explaining(config, "document"), client_for(config.grist_doc_id) as client:
+            demo_allowed = not _non_empty(client, contract_table_ids(client.tables()))
+    if not args.seed_implements and not args.demo_data:
+        args.seed_implements = _ask_yes_no(
+            out, "Add the example implements (a starting list you can edit in Grist)?", stdin
+        )
+    if demo_allowed and not args.demo_data:
+        args.demo_data = _ask_yes_no(
+            out, "Add demo data (a few fictional athletes, meets and results)?", stdin
+        )
+    print(file=out)
+    return True
+
+
 def run(
     args: argparse.Namespace,
     config: Config,
@@ -948,6 +1087,15 @@ def run(
 ) -> None:
     def client_for(doc_id: str) -> GristClient:
         return GristClient(config.grist_url, doc_id, config.grist_api_key, transport=transport)
+
+    if args.guided:
+        if not _tty(sys.stdin):
+            raise InitError(
+                "--interactive needs a terminal; without one, use the flags (see --help)"
+            )
+        if not guide(args, config, client_for, out, sys.stdin):
+            return
+    args.name = args.name or "BestYet"
 
     if args.check:
         with _explaining(config, "document"), client_for(config.grist_doc_id) as client:
@@ -1081,7 +1229,10 @@ def _confirm(args: argparse.Namespace, out) -> bool:
     if args.yes:
         return True
     if not sys.stdin.isatty():
-        raise InitError("not interactive; pass --yes to run non-interactively")
+        raise InitError(
+            "not interactive; pass --yes to apply, or --dry-run to only see the plan "
+            "(--interactive asks questions in a terminal)"
+        )
     out.write("Apply these changes? [y/N] ")
     out.flush()
     try:
@@ -1173,9 +1324,10 @@ def main(
     transport: httpx.BaseTransport | None = None,
 ) -> int:
     args = parse_args(argv)
+    args.guided = wants_guided(args, sys.stdin, sys.stdout)
     config = None
     try:
-        config = Config.from_env(environ, require_doc_id=not args.create)
+        config = Config.from_env(environ, require_doc_id=not (args.create or args.guided))
         run(args, config, sys.stdout, transport)
     except Interrupted as e:
         print(f"error: {e}", file=sys.stderr)

@@ -25,9 +25,12 @@ The goals for version 1 (see [Status and Limitations](#status-and-limitations) f
 Set up a Grist document with the init script (`GRIST_URL` and `GRIST_API_KEY` set, see [Configuration](#configuration)):
 
 ```
+bestyet-init                                                         # in a terminal: asks what to set up
 bestyet-init --create --workspace "My Workspace" --name "BestYet"   # new document; prints its id and the GRIST_DOC_ID line to add
-bestyet-init                                                         # existing document in GRIST_DOC_ID
+bestyet-init --yes                                                   # existing document in GRIST_DOC_ID, without asking
 ```
+
+In a terminal, `bestyet-init` with no options (or with `--interactive`) asks in plain language: a new document or the existing one in `GRIST_DOC_ID`, which workspace (from a numbered list of those your key can see) and name for a new one, and whether to add the example implements and demo data. Any option you give skips its question. Without a terminal it never asks: use the options. `--check`, `--dry-run` and `--yes` never ask either.
 
 It prints the whole plan (grouped: document, tables, calculated columns, personal bests, display, example data), then asks `Apply these changes? [y/N]` before changing anything, and ends with a summary of what it did and what to do next (after `--create`, the exact `GRIST_DOC_ID=...` line to add to your environment; the script saves nothing itself); `--yes` skips the prompt (required without a terminal), `--dry-run` only shows the plan. It only adds what is missing (tables, columns, the formulas and triggers, the personal-bests summary table on a `Personal bests` page, and names in Ref columns where unset), and a second run does nothing. With `--create` it also removes the empty `Table1` that Grist puts in every new document, but only if that table is untouched. A document with tables of its own is refused unless you pass `--allow-existing-tables`; this includes a blank document made in the Grist UI (it has an empty `Table1`), so use `--create` instead. It also adds the example events (matched by name; existing rows are never changed or duplicated). Pass `--seed-implements` to add the example implement rows too (matched by event and grade; both ignore case and spaces). The example implements are only examples: adjust them in Grist. Pass `--demo-data` to load a few fictional athletes, meets and results (plus the example events and implements they use); it refuses, writing nothing, unless Athletes, Meets and Results are all empty.
 
