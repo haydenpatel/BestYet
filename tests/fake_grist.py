@@ -106,7 +106,9 @@ class FakeGrist:
                         {
                             "id": t,
                             "fields": {
-                                "summarySourceTable": 5 if t in self.summary_tables else 0,
+                                "summarySourceTable": self.ref("Results", "")
+                                if t in self.summary_tables
+                                else 0,
                                 "tableRef": self.ref(t, ""),
                             },
                         }

@@ -7,7 +7,8 @@ missing tables, columns (plain, formula and trigger), the PB summary table with 
 overwrites; the one exception is Grist's own empty default table in a document this run
 created (see ``remove_default_table``). The whole plan is printed first and applied only
 after confirmation (``--yes`` skips the prompt; without a terminal ``--yes`` or ``--dry-run``
-is required).
+is required). ``--check`` instead reads the document (GET only), reports every difference from
+the contract (``bestyet.check``, also run by the app at startup) and exits non-zero on any.
 
 The plan is a list of small steps, each with ``describe()`` and ``apply(client)``, so later
 work (seed rows) adds step types and extends ``build_plan`` without touching the CLI.
@@ -22,6 +23,7 @@ from dataclasses import dataclass, field
 import httpx
 
 from bestyet import schema
+from bestyet.check import check_document, format_differences, page_names
 from bestyet.config import Config, ConfigError
 from bestyet.grist import GristClient, GristError
 
@@ -385,6 +387,11 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     p.add_argument("--name", default="BestYet", help="name of the new document (default BestYet)")
     p.add_argument("--dry-run", action="store_true", help="show the plan, change nothing")
     p.add_argument(
+        "--check",
+        action="store_true",
+        help="read-only: report every difference from the contract, exit non-zero on any",
+    )
+    p.add_argument(
         "--allow-existing-tables",
         action="store_true",
         help="proceed even if the document has tables that are not part of the contract",
@@ -393,6 +400,21 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         "-y", "--yes", action="store_true", help="apply without asking (for non-interactive use)"
     )
     args = p.parse_args(argv)
+    if args.check:
+        used = [
+            flag
+            for flag, on in (
+                ("--create", args.create),
+                ("--workspace", args.workspace),
+                ("--org", args.org),
+                ("--dry-run", args.dry_run),
+                ("--allow-existing-tables", args.allow_existing_tables),
+                ("--yes", args.yes),
+            )
+            if on
+        ]
+        if used:
+            p.error(f"--check is read-only and cannot be combined with {', '.join(used)}")
     if args.create and not args.workspace:
         p.error("--create needs --workspace")
     if not args.create and (args.workspace or args.org):
@@ -471,6 +493,15 @@ def run(
     def client_for(doc_id: str) -> GristClient:
         return GristClient(config.grist_url, doc_id, config.grist_api_key, transport=transport)
 
+    if args.check:
+        with client_for(config.grist_doc_id) as client:
+            differences = check_document(client)
+        if differences:
+            print(format_differences(differences), file=out)
+            raise InitError("document differs from the contract")
+        print("ok: the document matches the contract", file=out)
+        return
+
     if not args.create:
         if not config.grist_doc_id:
             raise InitError("GRIST_DOC_ID is missing (or use --create)")
@@ -530,12 +561,7 @@ def _set_up_existing(client: GristClient, args: argparse.Namespace, out) -> None
     present = contract_table_ids(tables)
     actual = {t: {c["id"]: c.get("fields", {}) for c in client.columns(t)} for t in present}
     summary_tables = [t["id"] for t in tables if t.get("fields", {}).get("summarySourceTable")]
-    pages = [
-        v["fields"]["name"]
-        for v in client.records("_grist_Views")
-        if v["fields"].get("type") != "raw_data"
-    ]
-    plan = build_plan(actual, pages, summary_tables)
+    plan = build_plan(actual, page_names(client), summary_tables)
     for w in warnings:
         print(f"warning: {w}", file=out)
     if not _show_plan(plan, [], args, out) or args.dry_run or not _confirm(args, out):

@@ -97,7 +97,7 @@ def test_key_never_in_repr_str_or_error():
     assert KEY not in repr(cfg)
     assert KEY not in str(cfg)
     assert KEY not in f"{cfg}"
-    assert KEY not in repr(create_app(cfg).config["BESTYET"])
+    assert KEY not in repr(create_app(cfg, verify=False).config["BESTYET"])
     assert KEY not in repr(dataclasses.asdict(cfg))
     assert KEY not in repr(vars(cfg))
     assert KEY not in f"{cfg.grist_api_key}"
@@ -106,10 +106,9 @@ def test_key_never_in_repr_str_or_error():
     assert KEY not in str(err.value)
 
 
-def test_health_without_config_and_config_stored():
-    assert create_app().test_client().get("/health").status_code == 200
+def test_config_stored():
     cfg = Config.from_env(env())
-    assert create_app(cfg).config["BESTYET"] is cfg
+    assert create_app(cfg, verify=False).config["BESTYET"] is cfg
 
 
 def test_dotenv_loads_and_does_not_override(tmp_path):
