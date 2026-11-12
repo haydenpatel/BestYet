@@ -156,6 +156,44 @@ def test_existing_rows_are_kept_and_not_duplicated(capsys):
     assert len(imps) == 2 + len(schema.EXAMPLE_IMPLEMENTS) - 1
 
 
+def test_case_and_space_variants_are_not_re_added():
+    fake = full_fake()
+    variants = ["discus ", " 100M", "SHOT PUT"]
+    fake.rows["Events"] = [
+        {"id": i, "fields": {"Name": n, "Kind": "Time"}} for i, n in enumerate(variants, 1)
+    ]
+    fake.rows["Implements"] = [
+        {"id": 1, "fields": {"Event": 1, "Grade": "grade 8 ", "Weight": "x"}},
+        {"id": 2, "fields": {"Event": 3, "Grade": "GRADE 9", "Weight": "y"}},
+    ]
+    before = json.dumps(fake.rows)
+    assert run(fake, "--seed-implements") == 0
+    added = [r["fields"]["Name"] for r in fake.rows["Events"][3:]]
+    assert len(added) == len(schema.EXAMPLE_EVENTS) - 3
+    assert not {"Discus", "100m", "Shot Put"} & set(added)
+    ids = {r["fields"]["Name"]: r["id"] for r in fake.rows["Events"]}
+    new = [(r["fields"]["Event"], r["fields"]["Grade"]) for r in fake.rows["Implements"][2:]]
+    assert new == [(1, "Grade 9"), (3, "Grade 8")]  # Discus 9 and Shot Put 8 only
+    assert json.loads(before)["Events"] == fake.rows["Events"][:3]
+    assert ids["discus "] == 1
+
+
+def test_conflicts_get_no_seed_steps(capsys):
+    tables = full_tables()
+    tables["events"] = tables.pop("Events")  # case-only table conflict
+    fake = FakeGrist(tables)
+    assert run(fake, "--seed-implements") == 1
+    assert "add example" not in capsys.readouterr().out
+    assert fake.writes == []
+
+
+def test_missing_events_table_with_seed_implements_plans_both_in_order():
+    fake = FakeGrist()
+    assert run(fake, "--seed-implements") == 0  # tables, then Events rows, then Implements
+    assert len(fake.rows["Events"]) == len(schema.EXAMPLE_EVENTS)
+    assert len(fake.rows["Implements"]) == len(schema.EXAMPLE_IMPLEMENTS)
+
+
 def test_implements_not_seeded_without_the_flag():
     fake = full_fake()
     assert run(fake) == 0

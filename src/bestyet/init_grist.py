@@ -12,7 +12,7 @@ the contract (``bestyet.check``, also run by the app at startup) and exits non-z
 
 Seed rows are plan steps too: the example Events always, the example Implements only with
 ``--seed-implements``. They only add rows that are missing (Events matched by Name,
-Implements by Event and Grade); an existing row is never changed or duplicated.
+Implements by Event and Grade, ignoring case and surrounding spaces); an existing row is never changed or duplicated.
 
 The plan is a list of small steps, each with ``describe()`` and ``apply(client)``, so later
 work (demo data) adds step types and extends ``build_plan`` without touching the CLI.
@@ -207,22 +207,30 @@ class CreateSummaryPage(Step):
             raise InitError(f"Grist did not create {s.id}; the document needs a manual fix")
 
 
+def _norm(value: object) -> str:
+    """Key for matching hand-edited values: ignores case and surrounding spaces."""
+    return str(value or "").strip().casefold()
+
+
 def _event_names(events: Sequence[Mapping]) -> dict[int, str]:
     """Events row id -> Name."""
     return {r["id"]: r["fields"].get("Name") for r in events}
 
 
 def _missing_events(events: Sequence[Mapping]) -> tuple[tuple[str, str], ...]:
-    have = set(_event_names(events).values())
-    return tuple(e for e in schema.EXAMPLE_EVENTS if e[0] not in have)
+    have = {_norm(n) for n in _event_names(events).values()}
+    return tuple(e for e in schema.EXAMPLE_EVENTS if _norm(e[0]) not in have)
 
 
 def _missing_implements(
     events: Sequence[Mapping], implements: Sequence[Mapping]
 ) -> tuple[tuple[str, str, str], ...]:
     names = _event_names(events)
-    have = {(names.get(r["fields"].get("Event")), r["fields"].get("Grade")) for r in implements}
-    return tuple(i for i in schema.EXAMPLE_IMPLEMENTS if (i[0], i[1]) not in have)
+    have = {
+        (_norm(names.get(r["fields"].get("Event"))), _norm(r["fields"].get("Grade")))
+        for r in implements
+    }
+    return tuple(i for i in schema.EXAMPLE_IMPLEMENTS if (_norm(i[0]), _norm(i[1])) not in have)
 
 
 @dataclass(frozen=True)
@@ -248,12 +256,14 @@ class SeedImplements(Step):
     def apply(self, client: GristClient) -> None:
         events = client.records("Events")
         rows = _missing_implements(events, client.records("Implements"))
-        ids = {name: i for i, name in _event_names(events).items()}
+        ids = {}
+        for i, name in _event_names(events).items():
+            ids.setdefault(_norm(name), i)
         add = []
         for event, grade, weight in rows:
-            if event not in ids:
+            if _norm(event) not in ids:
                 raise InitError(f"Events has no row named {event!r}; cannot add its Implements")
-            add.append({"Event": ids[event], "Grade": grade, "Weight": weight})
+            add.append({"Event": ids[_norm(event)], "Grade": grade, "Weight": weight})
         if add:
             client.add("Implements", add)
 
