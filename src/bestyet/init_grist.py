@@ -31,6 +31,7 @@ and the next steps; a run that stopped part-way reports what was done and what w
 
 import argparse
 import json
+import re
 import sys
 from collections.abc import Collection, Mapping, Sequence
 from contextlib import contextmanager
@@ -52,9 +53,16 @@ class InitError(Exception):
 class PartialFailure(InitError):
     """The run stopped part-way: what was done, what failed and what was not done."""
 
-    def __init__(self, done: Sequence[str], pending: Sequence[str], error: Exception):
+    def __init__(
+        self,
+        done: Sequence[str],
+        pending: Sequence[str],
+        error: Exception,
+        attention: Sequence[str] = (),
+    ):
         super().__init__(str(error))
         self.done, self.pending, self.error = list(done), list(pending), error
+        self.attention = list(attention)
 
     @property
     def rerun_safe(self) -> bool:
@@ -68,6 +76,9 @@ class PartialFailure(InitError):
         lines += [f"  - {d}" for d in self.done]
         lines.append("Not done (the first step failed):")
         lines += [f"  - {p}" for p in self.pending]
+        if self.attention:
+            lines.append("Needs attention:")
+            lines += [f"  - {a}" for a in self.attention]
         if fix:
             lines.append(fix)
         return "\n".join(lines)
@@ -86,7 +97,12 @@ def explain(e: GristError, config: Config, what: str = "") -> str:
     """A readable message for a failed Grist call. `what` is "workspace" or "document" when
     a 404 can be pinned on one. Names the host only: never credentials, path, query or key."""
     if e.status == 0:
-        host = urlsplit(config.grist_url).netloc.rpartition("@")[2]
+        parts = urlsplit(config.grist_url)
+        host = parts.hostname or ""
+        if ":" in host:
+            host = f"[{host}]"  # IPv6
+        if parts.port:
+            host = f"{host}:{parts.port}"
         return (
             f"Could not reach Grist at {host}: {_CAUSES.get(e.cause or '', _CAUSES['other'])}. "
             "Check GRIST_URL, your network and that the Grist server is up."
@@ -110,10 +126,17 @@ def explain(e: GristError, config: Config, what: str = "") -> str:
             "Grist could not find that workspace (HTTP 404). Check --workspace and that the API "
             "key's user can see it."
         )
-    if e.status == 404 and what == "document":
+    document_request = e.method == "GET" and re.fullmatch(r"docs/[^/]+/tables", e.path or "")
+    if e.status == 404 and what == "document" and document_request:
         return (
             "Grist could not find the document (HTTP 404). Check GRIST_DOC_ID and that the API "
             "key's user can access it."
+        )
+    if e.status == 404:
+        return (
+            f"Grist could not find something the script asked for (HTTP 404: {e.message}). "
+            "The document may have been changed during the run; run bestyet-init --check to see "
+            "what it looks like now."
         )
     if e.status >= 500:
         return (
@@ -183,6 +206,10 @@ class Step:
         """What the step added, for the summary."""
         raise NotImplementedError
 
+    def tables(self) -> tuple[str, ...]:
+        """Ids of the existing tables this step changes."""
+        return ()
+
     def apply(self, client: GristClient) -> None:
         raise NotImplementedError
 
@@ -197,6 +224,9 @@ class CreateTable(Step):
 
     def created(self) -> str:
         return f"Created table {self.table.id}"
+
+    def tables(self) -> tuple[str, ...]:
+        return (self.table.id,)
 
     def apply(self, client: GristClient) -> None:
         sent = [self.table.id]
@@ -213,6 +243,9 @@ class AddColumns(Step):
 
     def created(self) -> str:
         return f"Added columns to {self.table}: {self._names()}"
+
+    def tables(self) -> tuple[str, ...]:
+        return (self.table,)
 
     def _names(self) -> str:
         return ", ".join(c.id for c in self.columns)
@@ -251,6 +284,9 @@ class SetVisibleCols(Step):
 
     def created(self) -> str:
         return f"Set {self.table} columns to show names: {self._names()}"
+
+    def tables(self) -> tuple[str, ...]:
+        return (self.table,)
 
     def _names(self) -> str:
         return ", ".join(i[0] for i in self.items)
@@ -302,6 +338,9 @@ class CreateSummaryPage(Step):
 
     def created(self) -> str:
         return f"Created the {self.summary.page!r} page with summary table {self.summary.id}"
+
+    def tables(self) -> tuple[str, ...]:
+        return (self.summary.id,)
 
     def apply(self, client: GristClient) -> None:
         s = self.summary
@@ -360,6 +399,9 @@ class SeedEvents(Step):
     def created(self) -> str:
         return "Added the example Events"
 
+    def tables(self) -> tuple[str, ...]:
+        return ("Events",)
+
     def apply(self, client: GristClient) -> None:
         # Re-read: the plan was shown before confirmation, and Grist can be edited meanwhile.
         if rows := _missing_events(client.records("Events")):
@@ -375,6 +417,9 @@ class SeedImplements(Step):
 
     def created(self) -> str:
         return "Added the example Implements"
+
+    def tables(self) -> tuple[str, ...]:
+        return ("Implements",)
 
     def apply(self, client: GristClient) -> None:
         events = client.records("Events")
@@ -424,6 +469,9 @@ class LoadDemoData(Step):
     def created(self) -> str:
         return "Added demo data"
 
+    def tables(self) -> tuple[str, ...]:
+        return DEMO_TABLES
+
     def apply(self, client: GristClient) -> None:
         _require_empty(client, DEMO_TABLES)  # re-read: the document can change after the plan
         events: dict[str, int] = {}
@@ -470,7 +518,13 @@ class LoadDemoData(Step):
 @dataclass
 class Plan:
     steps: list[Step] = field(default_factory=list)
-    present: list[str] = field(default_factory=list)  # contract tables already in the document
+    present: list[str] = field(default_factory=list)  # contract tables in the document at the start
+
+    def unchanged(self) -> list[str]:
+        """Present tables that no step touches: they existed and needed nothing."""
+        touched = {t for s in self.steps for t in s.tables()}
+        return [t for t in self.present if t not in touched]
+
     notes: list[str] = field(default_factory=list)  # reported, never acted on
     conflicts: list[str] = field(default_factory=list)  # case-only id clashes: the run fails
 
@@ -966,7 +1020,10 @@ def _apply(
         try:
             step.apply(client)
         except (GristError, InitError) as e:
-            raise PartialFailure(done, [s.describe() for s in plan.steps[i:]], e) from None
+            attention = [f"{w}. To fix: {next_step(args.allow_existing_tables)}" for w in warnings]
+            raise PartialFailure(
+                done, [s.describe() for s in plan.steps[i:]], e, attention
+            ) from None
         done.append(step.created())
     _finish(plan, warnings, args, out, done, doc_id)
 
@@ -987,8 +1044,8 @@ def _finish(
         print("  Done:" if done else "  Done: nothing", file=out)
         for item in done:
             print(f"    - {item}", file=out)
-        if plan.present:
-            print(f"  Already there: tables {', '.join(plan.present)}", file=out)
+        if unchanged := plan.unchanged():
+            print(f"  Already there, unchanged: tables {', '.join(unchanged)}", file=out)
     if warnings:
         print("Needs attention:", file=out)
         for w in warnings:

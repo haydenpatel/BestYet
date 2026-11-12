@@ -21,13 +21,24 @@ class GristError(Exception):
     """A failed Grist call. `status` is the HTTP status, or 0 when no response arrived.
 
     `cause` classifies a failure with no usable answer: "dns", "refused", "timeout", "tls",
-    "other" (no response), "redirect" or "invalid_json"; None for an ordinary HTTP error."""
+    "other" (no response), "redirect" or "invalid_json"; None for an ordinary HTTP error.
+    `method` and `path` (below `/api/`) say which request failed, so callers can tell a
+    document-level request from another one."""
 
-    def __init__(self, status: int, message: str, cause: str | None = None):
+    def __init__(
+        self,
+        status: int,
+        message: str,
+        cause: str | None = None,
+        path: str | None = None,
+        method: str | None = None,
+    ):
         super().__init__(f"Grist error {status}: {message}" if status else message)
         self.status = status
         self.message = message
         self.cause = cause
+        self.path = path
+        self.method = method
 
 
 def _cause(exc: BaseException) -> str:
@@ -105,12 +116,14 @@ class GristClient:
         except httpx.HTTPError as e:
             failure, cause = "Could not reach Grist", _cause(e)
         if failure:
-            raise GristError(0, failure, cause)
+            raise GristError(0, failure, cause, path, method)
         if not response.is_success:
             raise GristError(
                 response.status_code,
                 _error_message(response),
                 "redirect" if response.is_redirect else None,
+                path,
+                method,
             )
         if not response.content:
             return None
@@ -118,7 +131,7 @@ class GristClient:
             return response.json()
         except ValueError:
             failure = "Grist returned invalid JSON"
-        raise GristError(response.status_code, failure, "invalid_json")
+        raise GristError(response.status_code, failure, "invalid_json", path, method)
 
     def _doc(self, path: str, **kwargs):
         return self._request(kwargs.pop("method", "GET"), f"docs/{self._doc_id}/{path}", **kwargs)

@@ -1135,7 +1135,9 @@ def test_rerun_summary_lists_what_was_added_and_what_was_there(capsys):
     assert run(fake) == 0
     out = capsys.readouterr().out
     summary = out[out.index("\nSummary") :]
-    assert "Created table Meets" in summary and "Already there: tables Athletes" in summary
+    assert (
+        "Created table Meets" in summary and "Already there, unchanged: tables Athletes" in summary
+    )
     assert "Meets," not in summary.split("Already there")[1]
     assert "GRIST_DOC_ID" not in summary and "bestyet-init --check" in summary
 
@@ -1156,3 +1158,50 @@ def test_no_op_points_at_check(capsys):
     assert run(full_fake()) == 0
     out = capsys.readouterr().out
     assert out.startswith("Nothing to do") and "bestyet-init --check" in out
+
+
+def test_host_comes_from_the_parsed_url_only(capsys):
+    env = {**ENV, "GRIST_URL": "https://user:123/rest@host"}
+    assert main(["--check"], env, refuse(OSError("x"))) == 1
+    err = capsys.readouterr().err
+    assert "Grist at user:123: " in err and "rest" not in err and "@" not in err
+
+
+def test_ipv6_host_keeps_its_brackets(capsys):
+    env = {**ENV, "GRIST_URL": "http://[::1]:8484"}
+    assert main(["--check"], env, refuse(ConnectionRefusedError())) == 1
+    assert "Grist at [::1]:8484: " in capsys.readouterr().err
+
+
+def test_404_from_a_table_endpoint_is_not_a_missing_document(capsys):
+    fake = full_fake()
+    del fake.tables["Meets"]
+    orig = fake.handle
+
+    def handle(request):
+        if request.method == "POST" and request.url.path.endswith("/tables"):
+            return httpx.Response(404, json={"error": "Table not found"})
+        return orig(request)
+
+    fake.transport = httpx.MockTransport(handle)
+    assert run(fake) == 1
+    err = capsys.readouterr().err
+    assert "could not find something the script asked for (HTTP 404: Table not found)" in err
+    assert "could not find the document" not in err and "GRIST_DOC_ID" not in err
+
+
+def test_already_there_leaves_out_tables_that_were_changed(capsys):
+    fake = full_fake()
+    del fake.tables["Results"]["Mark"]
+    assert run(fake) == 0
+    out = capsys.readouterr().out
+    line = next(line for line in out.splitlines() if "Already there" in line)
+    assert "Athletes" in line and " Results," not in line and "tables Results" not in line
+
+
+def test_warnings_are_shown_when_the_run_stops_part_way(capsys):
+    fake = FakeGrist({"Table1": DEFAULTS})
+    fake.fail_on = "POST /api/docs/DOC_ID_HERE/tables"
+    assert run(fake, "--allow-existing-tables") == 1
+    err = capsys.readouterr().err
+    assert "Needs attention:" in err and "Table1 not removed" in err and "To fix:" in err
