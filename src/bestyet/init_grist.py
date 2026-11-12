@@ -2,20 +2,21 @@
 
 Run as ``python -m bestyet.init_grist`` (or ``bestyet-init``). It builds a plan by diffing
 ``schema.TABLES`` against the document, then applies only additions through the REST API:
-missing tables and missing plain columns. It never drops, renames, retypes or overwrites; the
-one exception is Grist's own empty default table in a document this run created (see
-``remove_default_table``). The whole plan is printed first and applied only after confirmation
-(``--yes`` skips the prompt; without a terminal ``--yes`` or ``--dry-run`` is required).
+missing tables, columns (plain, formula and trigger), the PB summary table with its page, and
+``visibleCol`` on Ref columns where it is unset. It never drops, renames, retypes or
+overwrites; the one exception is Grist's own empty default table in a document this run
+created (see ``remove_default_table``). The whole plan is printed first and applied only
+after confirmation (``--yes`` skips the prompt; without a terminal ``--yes`` or ``--dry-run``
+is required).
 
 The plan is a list of small steps, each with ``describe()`` and ``apply(client)``, so later
-work (formula and trigger columns, the summary table, seed rows) adds step types and
-extends ``build_plan`` without touching the CLI.
+work (seed rows) adds step types and extends ``build_plan`` without touching the CLI.
 """
 
 import argparse
 import json
 import sys
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, field
 
 import httpx
@@ -34,15 +35,29 @@ class InitError(Exception):
 
 
 def column_payload(column: schema.Column) -> dict:
+    """The REST body for creating one column.
+
+    `recalcDeps` is not part of it: Grist rejects it (and can corrupt the document) when sent
+    with the new column, so it is set in a second call, see `AddColumns.apply`."""
     fields: dict = {"type": column.type}
     if column.type == "Choice":
         choices = column.choices if column.choices is not None else schema.DEFAULT_GRADE_CHOICES
         fields["widgetOptions"] = json.dumps({"choices": list(choices)})
+    if column.formula is not None:
+        fields["isFormula"] = column.is_formula
+        fields["formula"] = column.formula
+        if column.recalc_when is not None:
+            fields["recalcWhen"] = column.recalc_when
     return {"id": column.id, "fields": fields}
 
 
 def table_payload(table: schema.Table, columns: Sequence[schema.Column]) -> dict:
     return {"id": table.id, "columns": [column_payload(c) for c in columns]}
+
+
+def _refs(client: GristClient, table: str) -> dict[str, dict]:
+    """Column id -> column record (with its `fields.colRef`) for one table."""
+    return {c["id"]: c for c in client.columns(table)}
 
 
 def _check_ids(sent: Sequence[str], got: Sequence[str]) -> None:
@@ -90,7 +105,100 @@ class AddColumns(Step):
 
     def apply(self, client: GristClient) -> None:
         sent = [c.id for c in self.columns]
+        triggers = [c for c in self.columns if c.recalc_deps]
+        refs = {i: c["fields"]["colRef"] for i, c in _refs(client, self.table).items()}
         _check_ids(sent, client.add_columns(self.table, [column_payload(c) for c in self.columns]))
+        if triggers:
+            # A reference list is sent as ["L", ref, ...]; the column API wants it in an update.
+            updates = [
+                {"id": c.id, "fields": {"recalcDeps": ["L", *(refs[d] for d in c.recalc_deps)]}}
+                for c in triggers
+            ]
+            try:
+                client.update_columns(self.table, updates)
+            except GristError as e:
+                names = ", ".join(f"{self.table}.{c.id}" for c in triggers)
+                raise InitError(
+                    f"{e}. Created without its trigger dependency: {names}. A re-run leaves "
+                    "existing columns alone: set the trigger columns in Grist, or remove them "
+                    "and re-run"
+                ) from None
+
+
+@dataclass(frozen=True)
+class SetVisibleCols(Step):
+    """Show names instead of row ids in Ref columns: set `visibleCol` where it is unset."""
+
+    table: str
+    items: tuple[tuple[str, str, str], ...]  # (column id, target table id, target column id)
+
+    def describe(self) -> str:
+        return f"show names in {self.table} Ref columns: {', '.join(i[0] for i in self.items)}"
+
+    def apply(self, client: GristClient) -> None:
+        have = _refs(client, self.table)
+        targets: dict[str, dict[str, dict]] = {}
+        updates = []
+        for column, target_table, target_column in self.items:
+            if have[column]["fields"].get("visibleCol"):  # re-checked: never overwrite a choice
+                continue
+            cols = targets.setdefault(target_table, _refs(client, target_table))
+            ref = cols[target_column]["fields"]["colRef"]
+            updates.append({"id": column, "fields": {"visibleCol": ref}})
+        if updates:
+            client.update_columns(self.table, updates)
+            # visibleCol alone does not make Grist show the names; it needs a display column.
+            client.apply(
+                [
+                    [
+                        "SetDisplayFormula",
+                        self.table,
+                        None,
+                        have[c]["fields"]["colRef"],
+                        f"${c}.{t}",
+                    ]
+                    for c, _, t in self.items
+                    if any(u["id"] == c for u in updates)
+                ]
+            )
+
+
+@dataclass(frozen=True)
+class CreateSummaryPage(Step):
+    """Create the summary table through a view section on a new page.
+
+    Grist keeps a summary table only while a view section uses it. Grist reuses the table
+    if it already exists. Only runs when the page is missing; an existing page is never changed.
+    """
+
+    summary: schema.Summary
+
+    def describe(self) -> str:
+        s = self.summary
+        return (
+            f"create page {s.page!r} showing summary table {s.id} "
+            f"(grouped by {', '.join(s.group_by)})"
+        )
+
+    def apply(self, client: GristClient) -> None:
+        s = self.summary
+        refs = _refs(client, s.source_table)
+        table_ref = next(
+            t["fields"]["tableRef"] for t in client.tables() if t["id"] == s.source_table
+        )
+        group = [refs[g]["fields"]["colRef"] for g in s.group_by]
+        result = client.apply([["CreateViewSection", table_ref, 0, "record", group, None]])
+        view_ref = result["retValues"][0]["viewRef"]
+        try:
+            client.apply([["UpdateRecord", "_grist_Views", view_ref, {"name": s.page}]])
+        except GristError as e:
+            raise InitError(
+                f"{e}. A new page (view {view_ref}) was created but not named {s.page!r}; "
+                "rename it in Grist, or remove it, before re-running (a re-run would add "
+                "another page)"
+            ) from None
+        if not any(t["id"] == s.id for t in client.tables()):
+            raise InitError(f"Grist did not create {s.id}; the document needs a manual fix")
 
 
 @dataclass
@@ -101,15 +209,15 @@ class Plan:
 
 
 # Contract parts that later issues implement; named in the output so they are not silent.
-DEFERRED = (
-    "formula and trigger columns",
-    "the summary table",
-    "seed rows",
-)
+DEFERRED = ("seed rows",)
 
 
 def _is_plain(column: schema.Column) -> bool:
     return column.formula is None
+
+
+def _unset(fields: Mapping) -> bool:
+    return not fields.get("visibleCol")
 
 
 def unrelated_tables(actual_tables: Sequence[Mapping]) -> list[str]:
@@ -125,45 +233,119 @@ def unrelated_tables(actual_tables: Sequence[Mapping]) -> list[str]:
 
 
 def contract_table_ids(actual_tables: Sequence[Mapping]) -> list[str]:
-    known = {t.id.lower() for t in schema.TABLES}
+    """Ids of the contract tables and the PB summary table that are in the document."""
+    known = {t.id.lower() for t in schema.TABLES} | {schema.SUMMARY.id.lower()}
     return [t["id"] for t in actual_tables if t["id"].lower() in known]
 
 
-def build_plan(actual: Mapping[str, Mapping[str, str]]) -> Plan:
-    """Diff the contract against `actual` (table id -> {column id: type}); additions only.
+def _visible_items(
+    table: schema.Table, have: Mapping[str, Mapping] | None
+) -> tuple[tuple[str, str, str], ...]:
+    """Ref columns of `table` that should show names: all, or those with `visibleCol` unset."""
+    return tuple(
+        (c.id, c.ref_table, c.visible_col)
+        for c in table.columns
+        if c.visible_col and c.ref_table and (have is None or _unset(have.get(c.id, {})))
+    )
+
+
+def _diff_columns(
+    plan: Plan, table: schema.Table, actual_cols: Mapping[str, Mapping]
+) -> list[schema.Column]:
+    """Return the contract columns missing from `actual_cols`; record notes and conflicts."""
+    have = {c.lower(): c for c in actual_cols}
+    missing = []
+    for c in table.columns:
+        found = have.get(c.id.lower())
+        if found is None:
+            missing.append(c)
+        elif found != c.id:
+            plan.conflicts.append(f"{table.id}: column {found!r} exists, contract says {c.id!r}")
+        elif actual_cols[found].get("type") != c.type:
+            plan.notes.append(
+                f"{table.id}.{c.id} has type {actual_cols[found].get('type')}, "
+                f"contract says {c.type}; left as is"
+            )
+    return missing
+
+
+def build_plan(
+    actual: Mapping[str, Mapping[str, Mapping]],
+    pages: Collection[str] = (),
+    summary_tables: Collection[str] = (),
+) -> Plan:
+    """Diff the contract against `actual`; additions only.
+
+    `actual` maps table id -> {column id: column fields} for the contract tables and the
+    summary table that are in the document. `pages` are the page names that exist and
+    `summary_tables` the ids of real summary tables.
 
     Grist keeps ids unique ignoring case, so ids are matched ignoring case. A case-only
     difference is never added or renamed: it is a conflict the owner must fix in Grist.
     """
     plan = Plan()
     tables = {t.lower(): t for t in actual}
+    formula_steps: list[Step] = []
+    visible_steps: list[Step] = []
     for table in schema.TABLES:
-        plain = tuple(c for c in table.columns if _is_plain(c))
         actual_id = tables.get(table.id.lower())
         if actual_id is None:
-            plan.steps.append(CreateTable(table, plain))
-            continue
-        if actual_id != table.id:
+            plan.steps.append(CreateTable(table, tuple(c for c in table.columns if _is_plain(c))))
+            missing = [c for c in table.columns if not _is_plain(c)]
+            have = None
+        elif actual_id != table.id:
             plan.conflicts.append(f"table {actual_id!r} exists, contract says {table.id!r}")
             continue
-        have = {c.lower(): c for c in actual[actual_id]}
-        missing = []
-        for c in plain:
-            found = have.get(c.id.lower())
-            if found is None:
-                missing.append(c)
-            elif found != c.id:
-                plan.conflicts.append(
-                    f"{table.id}: column {found!r} exists, contract says {c.id!r}"
-                )
-            elif actual[actual_id][found] != c.type:
-                plan.notes.append(
-                    f"{table.id}.{c.id} has type {actual[actual_id][found]}, "
-                    f"contract says {c.type}; left as is"
-                )
-        if missing:
-            plan.steps.append(AddColumns(table.id, tuple(missing)))
+        else:
+            have = actual[actual_id]
+            missing = _diff_columns(plan, table, have)
+        plain = tuple(c for c in missing if _is_plain(c))
+        if plain and actual_id is not None:
+            plan.steps.append(AddColumns(table.id, plain))
+        if formulas := tuple(c for c in missing if not _is_plain(c)):
+            formula_steps.append(AddColumns(table.id, formulas))
+        if items := _visible_items(table, have):
+            visible_steps.append(SetVisibleCols(table.id, items))
+    plan.steps.extend(formula_steps)
+    plan.steps.extend(visible_steps)
+    if not plan.conflicts:
+        _plan_summary(plan, actual, pages, summary_tables)
     return plan
+
+
+def _plan_summary(
+    plan: Plan,
+    actual: Mapping[str, Mapping[str, Mapping]],
+    pages: Collection[str],
+    summary_tables: Collection[str],
+) -> None:
+    s = schema.SUMMARY
+    exists = {t.lower(): t for t in actual}.get(s.id.lower())
+    if exists is not None and (exists != s.id or exists not in summary_tables):
+        plan.conflicts.append(f"table {exists!r} exists but is not the summary table {s.id!r}")
+        return
+    page_exists = s.page in pages
+    if page_exists and exists is None:
+        plan.conflicts.append(
+            f"page {s.page!r} exists but summary table {s.id!r} does not; "
+            "add the summary table in Grist"
+        )
+        return
+    if not page_exists:
+        plan.steps.append(CreateSummaryPage(s))
+    have = actual.get(s.id)
+    missing = tuple(c for c in s.columns if have is None or c.id not in have)
+    if missing:
+        plan.steps.append(AddColumns(s.id, missing))
+    source = schema.table(s.source_table)
+    refs = {c.id: c for c in source.columns}
+    items = tuple(
+        (g, refs[g].ref_table, refs[g].visible_col)
+        for g in s.group_by
+        if refs[g].visible_col and (have is None or _unset(have.get(g, {})))
+    )
+    if items:
+        plan.steps.append(SetVisibleCols(s.id, items))
 
 
 # Workspace lookup.
@@ -345,11 +527,15 @@ def _set_up_existing(client: GristClient, args: argparse.Namespace, out) -> None
             + hint
         )
     warnings = [not_created_warning()] if DEFAULT_TABLE in extra else []
-    actual = {
-        t: {c["id"]: c.get("fields", {}).get("type", "") for c in client.columns(t)}
-        for t in contract_table_ids(tables)
-    }
-    plan = build_plan(actual)
+    present = contract_table_ids(tables)
+    actual = {t: {c["id"]: c.get("fields", {}) for c in client.columns(t)} for t in present}
+    summary_tables = [t["id"] for t in tables if t.get("fields", {}).get("summarySourceTable")]
+    pages = [
+        v["fields"]["name"]
+        for v in client.records("_grist_Views")
+        if v["fields"].get("type") != "raw_data"
+    ]
+    plan = build_plan(actual, pages, summary_tables)
     for w in warnings:
         print(f"warning: {w}", file=out)
     if not _show_plan(plan, [], args, out) or args.dry_run or not _confirm(args, out):

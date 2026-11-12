@@ -29,7 +29,7 @@ bestyet-init --create --workspace "My Workspace" --name "BestYet"   # new docume
 bestyet-init                                                         # existing document in GRIST_DOC_ID
 ```
 
-It prints the whole plan, then asks `Apply these changes? [y/N]` before changing anything; `--yes` skips the prompt (required without a terminal), `--dry-run` only shows the plan. It only adds missing tables and plain columns, and a second run does nothing. With `--create` it also removes the empty `Table1` that Grist puts in every new document, but only if that table is untouched. A document with tables of its own is refused unless you pass `--allow-existing-tables`; this includes a blank document made in the Grist UI (it has an empty `Table1`), so use `--create` instead. Formula columns, the summary table and seed data are not set up yet.
+It prints the whole plan, then asks `Apply these changes? [y/N]` before changing anything; `--yes` skips the prompt (required without a terminal), `--dry-run` only shows the plan. It only adds what is missing (tables, columns, the formulas and triggers, the personal-bests summary table on a `Personal bests` page, and names in Ref columns where unset), and a second run does nothing. With `--create` it also removes the empty `Table1` that Grist puts in every new document, but only if that table is untouched. A document with tables of its own is refused unless you pass `--allow-existing-tables`; this includes a blank document made in the Grist UI (it has an empty `Table1`), so use `--create` instead. Seed data is not set up yet.
 
 Once the project's container image exists (a later milestone), the same command can run as a one-off in it, with the settings passed as environment variables and nothing written to disk:
 

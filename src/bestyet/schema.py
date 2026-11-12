@@ -22,7 +22,8 @@ from dataclasses import dataclass
 @dataclass(frozen=True)
 class Column:
     """One column. ``recalc_deps`` holds column ids; Grist's column API stores column
-    refs, so the init script must map ids to refs when it sends ``recalcDeps``."""
+    refs, so the init script must map ids to refs when it sends ``recalcDeps``.
+    ``visible_col`` is likewise an id, mapped to a ref for Grist's ``visibleCol``."""
 
     id: str
     type: str  # Grist type: Text, Choice, Date, Int, Numeric, Bool or Ref:<Table>
@@ -32,6 +33,7 @@ class Column:
     is_formula: bool = False  # True: regular formula column; False with a formula: trigger
     recalc_when: int | None = None
     recalc_deps: tuple[str, ...] | None = None
+    visible_col: str | None = None  # Ref columns: id of the target column shown (its name)
 
 
 @dataclass(frozen=True)
@@ -42,12 +44,15 @@ class Table:
 
 @dataclass(frozen=True)
 class Summary:
-    """A summary table, described as data only. Creating it is the init script's job."""
+    """A summary table, described as data only. Creating it is the init script's job.
+    Grist keeps a summary table only while a view section uses it, so the script creates it
+    through a view section on ``page``."""
 
     id: str
     source_table: str
     group_by: tuple[str, ...]
     columns: tuple[Column, ...]  # beyond the group-by columns and Grist's own ``count``
+    page: str = "Personal bests"  # the page whose view section keeps the table alive
 
 
 # Formulas, verbatim from SPEC.md.
@@ -116,7 +121,7 @@ TABLES = (
     Table(
         "Implements",
         (
-            Column("Event", "Ref:Events", ref_table="Events"),
+            Column("Event", "Ref:Events", ref_table="Events", visible_col="Name"),
             Column("Grade", "Choice"),
             Column("Weight", "Text"),
         ),
@@ -124,9 +129,9 @@ TABLES = (
     Table(
         "Results",
         (
-            Column("Athlete", "Ref:Athletes", ref_table="Athletes"),
-            Column("Event", "Ref:Events", ref_table="Events"),
-            Column("Meet", "Ref:Meets", ref_table="Meets"),
+            Column("Athlete", "Ref:Athletes", ref_table="Athletes", visible_col="Name"),
+            Column("Event", "Ref:Events", ref_table="Events", visible_col="Name"),
+            Column("Meet", "Ref:Meets", ref_table="Meets", visible_col="Name"),
             Column("Mark", "Text"),
             Column("Place", "Int"),
             Column(
@@ -155,6 +160,7 @@ SUMMARY = Summary(
     source_table="Results",
     group_by=("Athlete", "Event", "Implement"),
     columns=(Column("Best", "Numeric", formula=BEST_FORMULA, is_formula=True),),
+    page="Personal bests",
 )
 # Grist adds ``count`` (Int) to every summary table; the contract requires it.
 SUMMARY_REQUIRED_COLUMNS = ("count", *(c.id for c in SUMMARY.columns))
