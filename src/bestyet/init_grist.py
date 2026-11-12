@@ -11,11 +11,16 @@ is required). ``--check`` instead reads the document (GET only), reports every d
 the contract (``bestyet.check``, also run by the app at startup) and exits non-zero on any.
 
 Seed rows are plan steps too: the example Events always, the example Implements only with
-``--seed-implements``. They only add rows that are missing (Events matched by Name,
-Implements by Event and Grade, ignoring case and surrounding spaces); an existing row is never changed or duplicated.
+``--seed-implements``. ``--demo-data`` adds fictional athletes, meets and results as the last
+step; it plans the example Events and Implements it needs, and refuses (writing nothing) unless
+Athletes, Meets and Results are all empty.
+
+The Events and Implements seeds only add rows that are missing (Events matched by Name,
+Implements by Event and Grade, ignoring case and surrounding spaces); an existing row is never
+changed or duplicated.
 
 The plan is a list of small steps, each with ``describe()`` and ``apply(client)``, so later
-work (demo data) adds step types and extends ``build_plan`` without touching the CLI.
+work adds step types and extends ``build_plan`` without touching the CLI.
 """
 
 import argparse
@@ -26,7 +31,7 @@ from dataclasses import dataclass, field
 
 import httpx
 
-from bestyet import schema
+from bestyet import dates, schema
 from bestyet.check import check_document, format_differences, page_names
 from bestyet.config import Config, ConfigError
 from bestyet.grist import GristClient, GristError
@@ -268,15 +273,84 @@ class SeedImplements(Step):
             client.add("Implements", add)
 
 
+DEMO_TABLES = ("Athletes", "Meets", "Results")
+
+
+def _non_empty(client: GristClient, tables: Collection[str]) -> list[str]:
+    """The demo target tables (among `tables`) that already have rows."""
+    return [t for t in DEMO_TABLES if t in tables and client.records(t)]
+
+
+def _require_empty(client: GristClient, tables: Collection[str], note: str = "") -> None:
+    if full := _non_empty(client, tables):
+        raise InitError(
+            f"--demo-data only loads into empty Athletes, Meets and Results; {', '.join(full)} "
+            f"already has rows{note}"
+        )
+
+
+@dataclass(frozen=True)
+class LoadDemoData(Step):
+    """Add the fictional athletes, meets and results.
+
+    Results go in with Athlete and Event in one call, so Grade and Implement resolve from
+    their trigger formulas. Needs the example Events (and Implements) from the steps before.
+    """
+
+    def describe(self) -> str:
+        return (
+            f"add demo data: {len(schema.DEMO_ATHLETES)} athletes, {len(schema.DEMO_MEETS)} "
+            f"meets, {len(schema.DEMO_RESULTS)} results (only if those tables are empty)"
+        )
+
+    def apply(self, client: GristClient) -> None:
+        _require_empty(client, DEMO_TABLES)  # re-read: the document can change after the plan
+        events: dict[str, int] = {}
+        for i, name in _event_names(client.records("Events")).items():
+            events.setdefault(_norm(name), i)
+        wanted = {_norm(r[1]) for r in schema.DEMO_RESULTS}
+        if missing := sorted(wanted - events.keys()):
+            raise InitError(f"Events has no row named {', '.join(missing)}; cannot add demo data")
+        athletes = dict(
+            zip(
+                (a[0] for a in schema.DEMO_ATHLETES),
+                client.add("Athletes", [{"Name": n, "Grade": g} for n, g in schema.DEMO_ATHLETES]),
+                strict=True,
+            )
+        )
+        meets = dict(
+            zip(
+                (m[0] for m in schema.DEMO_MEETS),
+                client.add(
+                    "Meets",
+                    [
+                        {"Name": n, "Date": dates.to_grist(dates.parse_iso(d)), "Location": loc}
+                        for n, d, loc in schema.DEMO_MEETS
+                    ],
+                ),
+                strict=True,
+            )
+        )
+        client.add(
+            "Results",
+            [
+                {
+                    "Athlete": athletes[a],
+                    "Event": events[_norm(e)],
+                    "Meet": meets[m],
+                    "Mark": mark,
+                    "Place": place,
+                }
+                for a, e, m, mark, place in schema.DEMO_RESULTS
+            ],
+        )
+
+
 @dataclass
 class Plan:
     steps: list[Step] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)  # reported, never acted on
     conflicts: list[str] = field(default_factory=list)  # case-only id clashes: the run fails
-
-
-# Contract parts that later issues implement; named in the output so they are not silent.
-DEFERRED = ("demo data",)
 
 
 def _is_plain(column: schema.Column) -> bool:
@@ -343,6 +417,7 @@ def build_plan(
     events: Sequence[Mapping] | None = None,
     implements: Sequence[Mapping] | None = None,
     seed_implements: bool = False,
+    demo_data: bool = False,
 ) -> Plan:
     """Diff the contract against `actual`; additions only.
 
@@ -351,6 +426,7 @@ def build_plan(
     `summary_tables` the ids of real summary tables. `events` and `implements` are the
     existing rows of those tables (None: the table does not exist yet). Missing example
     Events are always planned, missing example Implements only if `seed_implements`.
+    `demo_data` adds the demo step last; the caller checks that the tables are empty.
 
     Grist keeps ids unique ignoring case, so ids are matched ignoring case. A case-only
     difference is never added or renamed: it is a conflict the owner must fix in Grist.
@@ -383,7 +459,9 @@ def build_plan(
     if not plan.conflicts:
         _plan_summary(plan, actual, pages, summary_tables)
     if not plan.conflicts:  # nothing is seeded into a document that needs a manual fix
-        _plan_seeds(plan, events or [], implements or [], seed_implements)
+        _plan_seeds(plan, events or [], implements or [], seed_implements or demo_data)
+        if demo_data:
+            plan.steps.append(LoadDemoData())
     return plan
 
 
@@ -487,6 +565,14 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     p.add_argument(
         "-y", "--yes", action="store_true", help="apply without asking (for non-interactive use)"
     )
+    p.add_argument(
+        "--demo-data",
+        action="store_true",
+        help=(
+            "also load fictional athletes, meets and results (and the example Implements); "
+            "refused unless Athletes, Meets and Results are all empty"
+        ),
+    )
     args = p.parse_args(argv)
     if args.check:
         used = [
@@ -497,6 +583,7 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
                 ("--org", args.org),
                 ("--dry-run", args.dry_run),
                 ("--seed-implements", args.seed_implements),
+                ("--demo-data", args.demo_data),
                 ("--allow-existing-tables", args.allow_existing_tables),
                 ("--yes", args.yes),
             )
@@ -608,7 +695,7 @@ def run(
         ),
     ]
     # A new document is empty apart from that default table, so the plan is the full contract.
-    plan = build_plan({}, seed_implements=args.seed_implements)
+    plan = build_plan({}, seed_implements=args.seed_implements, demo_data=args.demo_data)
     if not _show_plan(plan, lead, args, out) or args.dry_run or not _confirm(args, out):
         return
     with client_for("") as admin:
@@ -652,8 +739,16 @@ def _set_up_existing(client: GristClient, args: argparse.Namespace, out) -> None
     summary_tables = [t["id"] for t in tables if t.get("fields", {}).get("summarySourceTable")]
     events = client.records("Events") if "Events" in present else None
     implements = client.records("Implements") if "Implements" in present else None
+    if args.demo_data:
+        _require_empty(client, present, ". Nothing was changed")
     plan = build_plan(
-        actual, page_names(client), summary_tables, events, implements, args.seed_implements
+        actual,
+        page_names(client),
+        summary_tables,
+        events,
+        implements,
+        args.seed_implements,
+        args.demo_data,
     )
     for w in warnings:
         print(f"warning: {w}", file=out)
@@ -714,7 +809,6 @@ def _apply(
 
 
 def _finish(plan: Plan, warnings: Sequence[str], args: argparse.Namespace, out) -> None:
-    print(f"not handled by this script yet: {', '.join(DEFERRED)}", file=out)
     for w in warnings:
         print(f"warning: {w}; next step: {next_step(args.allow_existing_tables)}", file=out)
     if plan.conflicts:
