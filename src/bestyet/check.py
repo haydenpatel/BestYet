@@ -12,9 +12,6 @@ from collections.abc import Collection, Mapping
 from bestyet import schema
 from bestyet.grist import GristClient
 
-# Grist's recalcWhen for "on new records or when a dependency changes".
-_TRIGGER_NEW_OR_DEP = 0
-
 
 class ContractError(Exception):
     """The document does not match the contract. `differences` lists every one."""
@@ -60,7 +57,7 @@ def _column_differences(
             want = sorted(refs[where][d] for d in column.recalc_deps if d in refs.get(where, {}))
             deps = fields.get("recalcDeps") or []
             have = sorted(d for d in deps if isinstance(d, int))
-            if fields.get("recalcWhen") != _TRIGGER_NEW_OR_DEP or have != want:
+            if fields.get("recalcWhen") != column.recalc_when or have != want:
                 names = ", ".join(column.recalc_deps)
                 out.append(f"{name} should recalculate when {names} changes")
     if column.visible_col and column.ref_table:
