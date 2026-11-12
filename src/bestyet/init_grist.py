@@ -71,25 +71,43 @@ class PartialFailure(InitError):
         """A plain re-run (which only adds) is the fix: the failure was a Grist call."""
         return isinstance(self.error, GristError)
 
-    def report(self, config: Config, fix: str) -> str:
+    def report(self, config: Config, steps: Sequence[str]) -> str:
         reason = explain(self.error, config, "document") if self.rerun_safe else str(self.error)
-        lines = [reason, "The run stopped part-way."]
         done = ([("Document", self.done)] if self.done else []) + grouped(
             self.applied, past=True, hidden=True
         )
-        lines.append("Done before the failure:" + ("" if done else " nothing"))
-        lines += group_lines(done)
-        lines.append("Failed (may be partly applied):")
-        lines += group_lines(grouped(self.pending[:1], hidden=True))
-        if rest := self.pending[1:]:
-            lines.append("Not done:")
-            lines += group_lines(grouped(rest, hidden=True))
-        if self.attention:
-            lines.append("Needs attention:")
-            lines += [f"  - {a}" for a in self.attention]
-        if fix:
-            lines += ["Next steps:", f"  {fix}"]
-        return "\n".join(lines)
+        return error_report(
+            reason,
+            done=done,
+            failed=grouped(self.pending[:1], hidden=True),
+            not_done=grouped(self.pending[1:], hidden=True),
+            steps=[*steps, *self.attention],
+        )
+
+
+class ErrorReport(InitError):
+    """An error text with its own headings, printed as is (no "error:" prefix)."""
+
+
+def error_report(
+    reason: str,
+    done: Sequence[tuple[str, Sequence[str]]] = (),
+    failed: Sequence[tuple[str, Sequence[str]]] = (),
+    not_done: Sequence[tuple[str, Sequence[str]]] = (),
+    steps: Sequence[str] = (),
+) -> str:
+    """Labelled blocks, blank line between, empty blocks left out."""
+    blocks = [["--- Error ---", reason, "The run stopped part-way."]]
+    for title, groups in (
+        ("What was done", done),
+        ("What failed (may be partly applied)", failed),
+        ("What was not done", not_done),
+    ):
+        if groups:
+            blocks.append([f"--- {title} ---", *group_lines(groups)])
+    if steps:
+        blocks.append(["--- Next steps ---", *(f"  {i}. {t}" for i, t in enumerate(steps, 1))])
+    return "\n\n".join("\n".join(b) for b in blocks)
 
 
 _CAUSES = {
@@ -1003,14 +1021,22 @@ def rerun_hint(doc_id: str) -> str:
     )
 
 
-def continue_hint(doc_id: str) -> str:
-    """For a failure a plain re-run would not repair: keep the id, fix the problem first."""
-    return (
-        f"The document was created (id {doc_id}). Fix the problem described above in Grist "
-        f"first, then continue with GRIST_DOC_ID={doc_id} and without --create (add "
-        f"--allow-existing-tables if {DEFAULT_TABLE} is still there). Do not re-run --create: "
-        "it would make another document."
+def next_steps_after_create(doc_id: str, rerun_safe: bool) -> list[str]:
+    """What to do when a run stopped after the document was created."""
+    use = (
+        f"run bestyet-init without --create, with GRIST_DOC_ID={doc_id} in your settings "
+        f"(add --allow-existing-tables if {DEFAULT_TABLE} is still there)"
     )
+    if rerun_safe:
+        return [
+            "Fix the cause shown under Error, if you can.",
+            f"{use[0].upper()}{use[1:]}. It only adds what is missing.",
+        ]
+    return [
+        "Fix the problem described under Error in Grist.",
+        f"Then {use}.",
+        "Do not run --create again: it would make another document.",
+    ]
 
 
 def default_table_state(client: GristClient) -> tuple[bool, str | None]:
@@ -1166,8 +1192,14 @@ def guide(args: argparse.Namespace, config: Config, client_for, out, stdin) -> b
         ws_id, label = resolve_workspace_label(admin, args.workspace, args.org)
         if not create:  # which document: one that is already there, or a new one
             docs = existing_docs(admin, ws_id)
-            labels = [d["name"] for d in docs]
-            if doc_id:
+            here = any(str(d["id"]) == str(doc_id) for d in docs)
+            labels = [
+                f"{d['name']} (the document in GRIST_DOC_ID)"
+                if here and str(d["id"]) == str(doc_id)
+                else d["name"]
+                for d in docs
+            ]
+            if doc_id and not here:
                 labels.append("The document in GRIST_DOC_ID")
             if not labels:
                 create = True
@@ -1296,7 +1328,7 @@ def run(
         if clash := name_clash(admin, workspace_id, args.name):
             raise NameTaken(clash["name"], workspace_label)
         doc_id = admin.create_doc(workspace_id, args.name)
-    _section(out, "Applying")
+    _section(out, "Setting up")
     print(f"Created the document {args.name!r} (id {doc_id}).", file=out)
     done = [f"Created document {args.name!r} (id {doc_id})"]
     try:
@@ -1315,12 +1347,18 @@ def run(
                 doc=(args.name, workspace_label),
             )
     except PartialFailure as e:
-        hint = rerun_hint(doc_id) if e.rerun_safe else continue_hint(doc_id)
-        raise InitError(e.report(config, hint)) from None
-    except GristError as e:
-        raise InitError(f"{explain(e, config, 'document')}\n{rerun_hint(doc_id)}") from None
-    except InitError as e:
-        raise InitError(f"{e}\n{rerun_hint(doc_id)}") from None
+        steps = next_steps_after_create(doc_id, e.rerun_safe)
+        raise ErrorReport(e.report(config, steps)) from None
+    except (GristError, InitError) as e:
+        safe = isinstance(e, GristError)
+        reason = explain(e, config, "document") if safe else str(e)
+        raise ErrorReport(
+            error_report(
+                reason,
+                done=[("Document", done)],
+                steps=next_steps_after_create(doc_id, safe),
+            )
+        ) from None
     except KeyboardInterrupt:
         raise Interrupted(f"aborted. {rerun_hint(doc_id)}") from None
 
@@ -1364,8 +1402,15 @@ def _set_up_existing(client: GristClient, config: Config, args: argparse.Namespa
     try:
         _apply(plan, client, warnings, args, out)
     except PartialFailure as e:
-        fix = "Fix the cause, then re-run: it only adds what is missing." if e.rerun_safe else ""
-        raise InitError(e.report(config, fix)) from None
+        steps = (
+            [
+                "Fix the cause shown under Error, if you can.",
+                "Run bestyet-init again; it only adds what is missing.",
+            ]
+            if e.rerun_safe
+            else ["Fix the problem described under Error in Grist."]
+        )
+        raise ErrorReport(e.report(config, steps)) from None
     except KeyboardInterrupt:
         raise Interrupted("aborted; re-run to add what is still missing") from None
 
@@ -1385,7 +1430,8 @@ def _show_plan(plan: Plan, lead: Sequence[str], args: argparse.Namespace, out) -
             print(f"  - {conflict}", file=out)
     if not lead and not plan.steps:
         print(
-            "Nothing to do: the document already has everything this script adds. "
+            ("\n" if getattr(args, "guided", False) else "")
+            + "Nothing to do: the document already has everything this script adds. "
             "To verify it against the contract, run bestyet-init --check.",
             file=out,
         )
@@ -1435,7 +1481,7 @@ def _apply(
     `doc` is the (name, workspace) of a document this run created."""
     applied: list[Step] = []
     if doc is None:
-        _section(out, "Applying")
+        _section(out, "Setting up")
     for i, step in enumerate(plan.steps):
         try:
             step.apply(client)
@@ -1459,8 +1505,7 @@ def _finish(
 
     `applied` is None when nothing was applied (dry run, declined, nothing to do)."""
     if applied is not None:
-        _section(out, "Done")
-        print(done_message(applied, doc), file=out)
+        print(f"\n{done_message(applied, doc)}", file=out)
     if warnings:
         print("Needs attention:", file=out)
         for w in warnings:
@@ -1508,6 +1553,9 @@ def main(
         return 1
     except GristError as e:  # not caught and explained by run(), e.g. a failure while closing
         print(f"error: {explain(e, config)}", file=sys.stderr)
+        return 1
+    except ErrorReport as e:
+        print(f"\n{e}", file=sys.stderr)
         return 1
     except InitError as e:
         print(f"error: {e}", file=sys.stderr)

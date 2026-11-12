@@ -543,8 +543,8 @@ def test_failure_after_create_repeats_doc_id(capsys):
     assert run(fake, *CREATE, env=ENV_NO_DOC) == 1
     err = capsys.readouterr().err
     assert "GRIST_DOC_ID=NEWDOC" in err and "without --create" in err
-    assert "Done before the failure:" in err and "Created document" in err
-    assert "Not done" in err and KEY not in err
+    assert "--- What was done ---" in err and "Created document" in err
+    assert "--- What was not done ---" in err and KEY not in err
 
 
 def test_failure_without_create_has_no_doc_hint(capsys):
@@ -553,7 +553,7 @@ def test_failure_without_create_has_no_doc_hint(capsys):
     assert run(fake) == 1
     err = capsys.readouterr().err
     assert "without --create" not in err and "GRIST_DOC_ID=" not in err
-    assert "Fix the cause, then re-run" in err and "Not done" in err
+    assert "Run bestyet-init again" in err and "--- What was not done ---" in err
 
 
 def test_unrelated_tables_columns_not_read():
@@ -648,7 +648,7 @@ def test_remove_table_failure_reports_id_and_hint(capsys):
     assert run(fake, *CREATE, env=ENV_NO_DOC) == 1
     err = capsys.readouterr().err
     assert "NEWDOC" in err and "GRIST_DOC_ID=NEWDOC" in err
-    assert "--allow-existing-tables" in err and "Done before the failure" not in err
+    assert "--allow-existing-tables" in err and "--- Error ---" in err
     assert "Table1" in fake.tables
 
 
@@ -1087,14 +1087,14 @@ def test_partial_failure_lists_done_and_not_done_for_an_existing_document(capsys
     assert run(fake) == 1
     captured = capsys.readouterr()
     err = captured.err
-    assert err.startswith("error: Grist reported a server error (HTTP 500: boom)")
+    assert err.lstrip().startswith("--- Error ---\nGrist reported a server error (HTTP 500: boom)")
     assert "The run stopped part-way." in err
-    assert "Done before the failure:\n  Tables\n    - Created Meets" in err
+    assert "--- What was done ---\n  Tables\n    - Created Meets" in err
     assert (
-        "Failed (may be partly applied):\n  Tables\n    - Add missing columns to Results: Mark"
+        "--- What failed (may be partly applied) ---\n  Tables\n    - Add missing columns to Results: Mark"
         in err
     )
-    assert err.rstrip().endswith("re-run: it only adds what is missing.")
+    assert err.rstrip().endswith("it only adds what is missing.")
     assert "Summary" not in captured.out and KEY not in err + captured.out
 
 
@@ -1103,7 +1103,7 @@ def test_partial_failure_with_nothing_done(capsys):
     del fake.tables["Meets"]
     fake.fail_on = "POST"
     assert run(fake) == 1
-    assert "Done before the failure: nothing" in capsys.readouterr().err
+    assert "What was done" not in capsys.readouterr().err  # nothing to list
 
 
 def test_partial_failure_after_create_names_the_document(capsys):
@@ -1113,11 +1113,11 @@ def test_partial_failure_after_create_names_the_document(capsys):
     captured = capsys.readouterr()
     assert "Created the document 'BestYet' (id NEWDOC)." in captured.out  # printed straight away
     assert (
-        "Done before the failure:\n  Document\n    - Created document 'BestYet' (id NEWDOC)"
+        "--- What was done ---\n  Document\n    - Created document 'BestYet' (id NEWDOC)"
         in captured.err
     )
     assert "Removed Grist's empty default table (Table1)" in captured.err
-    assert "re-run without --create and with GRIST_DOC_ID=NEWDOC" in captured.err
+    assert "without --create, with GRIST_DOC_ID=NEWDOC" in captured.err
 
 
 def test_create_ends_with_a_short_done_message_and_next_steps(capsys):
@@ -1126,7 +1126,7 @@ def test_create_ends_with_a_short_done_message_and_next_steps(capsys):
     captured = capsys.readouterr()
     out = captured.out
     assert captured.err == "" and KEY not in out and "Summary" not in out
-    done = out[out.index("--- Done ---") :]
+    done = out[out.index("Done. Created") :]
     assert (
         "Done. Created 'My Doc' in workspace 'Work' with 5 tables, the 'Personal bests' page"
         in done
@@ -1135,8 +1135,9 @@ def test_create_ends_with_a_short_done_message_and_next_steps(capsys):
     assert "\n       GRIST_DOC_ID=NEWDOC\n" in done  # on a line of its own
     assert done.index("GRIST_DOC_ID=NEWDOC") < done.index("2. Then run bestyet-init --check")
     assert "saved nothing" in done
-    for part in ("Applying", "Plan", "Done", "Next steps"):
+    for part in ("Setting up", "Plan", "Next steps"):
         assert f"--- {part} ---" in out
+    assert "--- Done ---" not in out
 
 
 def test_existing_document_done_message_says_what_was_added(capsys):
@@ -1160,7 +1161,7 @@ def test_warnings_are_shown_when_the_run_stops_part_way(capsys):
     fake.fail_on = "POST /api/docs/DOC_ID_HERE/tables"
     assert run(fake, "--allow-existing-tables") == 1
     err = capsys.readouterr().err
-    assert "Needs attention:" in err and "Table1 not removed" in err and "To fix:" in err
+    assert "--- Next steps ---" in err and "Table1 not removed" in err and "To fix:" in err
 
 
 def _fail_page_rename(fake):
@@ -1207,11 +1208,11 @@ def test_create_with_a_failure_a_rerun_cannot_fix_keeps_the_id_and_does_not_say_
     break_it(fake)
     assert run(fake, *CREATE, env=ENV_NO_DOC) == 1
     err = capsys.readouterr().err
-    assert problem in err and "Failed (may be partly applied):" in err and failed in err
+    assert problem in err and "--- What failed (may be partly applied) ---" in err and failed in err
     assert "id NEWDOC" in err and "GRIST_DOC_ID=NEWDOC" in err
-    assert "Fix the problem described above in Grist first" in err
+    assert "Fix the problem described under Error in Grist" in err
     assert "To continue, re-run" not in err and "it only adds what is missing" not in err
-    assert "Do not re-run --create" in err and KEY not in err
+    assert "Do not run --create again" in err and KEY not in err
 
 
 def test_failed_step_is_separated_from_the_steps_not_done(capsys):
@@ -1222,16 +1223,16 @@ def test_failed_step_is_separated_from_the_steps_not_done(capsys):
     assert run(fake) == 1
     err = capsys.readouterr().err
     assert (
-        "Failed (may be partly applied):\n  Tables\n    - Add missing columns to Results: Mark"
+        "--- What failed (may be partly applied) ---\n  Tables\n    - Add missing columns to Results: Mark"
         in err
     )
-    assert "Not done:" not in err  # it was the last step
+    assert "What was not done" not in err  # it was the last step
     fake = FakeGrist()
     fake.fail_on = "POST /api/docs/DOC_ID_HERE/tables"
     assert run(fake) == 1
     err = capsys.readouterr().err
-    assert "Failed (may be partly applied):\n  Tables\n    - Create Athletes" in err
-    assert "Not done:\n  Tables\n    - Create Events" in err
+    assert "--- What failed (may be partly applied) ---\n  Tables\n    - Create Athletes" in err
+    assert "--- What was not done ---\n  Tables\n    - Create Events" in err
 
 
 def test_plan_is_grouped_in_plain_words(capsys):
@@ -1661,7 +1662,7 @@ def test_existing_document_runs_do_not_look_at_workspaces(capsys):
 def test_applying_line_has_no_internal_step_count(capsys):
     assert run(FakeGrist(), *CREATE, env=ENV_NO_DOC) == 0
     out = capsys.readouterr().out
-    assert "--- Applying ---" in out and "Applying 1" not in out
+    assert "--- Setting up ---" in out and "Applying" not in out
 
 
 def test_guided_org_alone_picks_from_that_organisation(monkeypatch, capsys):
@@ -1704,7 +1705,10 @@ def test_behind_the_scenes_steps_are_left_out_of_the_plan_but_named_when_they_fa
     fake.fail_on = "POST /api/docs/DOC_ID_HERE/tables/Results/columns"
     assert run(fake) == 1
     err = capsys.readouterr().err
-    assert "Failed (may be partly applied):\n  Calculated columns\n    - Results: Value" in err
+    assert (
+        "--- What failed (may be partly applied) ---\n  Calculated columns\n    - Results: Value"
+        in err
+    )
 
 
 def test_failed_default_table_removal_is_reported_not_planned(capsys):
@@ -1712,5 +1716,36 @@ def test_failed_default_table_removal_is_reported_not_planned(capsys):
     fake.fail_on = "POST /api/docs/NEWDOC/apply"
     assert run(fake, *CREATE, env=ENV_NO_DOC) == 1
     out = capsys.readouterr()
-    assert "Table1" not in out.out.split("--- Applying ---")[0]
+    assert "Table1" not in out.out.split("--- Setting up ---")[0]
     assert "--allow-existing-tables" in out.err
+
+
+def test_the_grist_doc_id_document_is_labelled_in_the_list_not_listed_twice(monkeypatch, capsys):
+    fake = FakeGrist()
+    fake.workspaces = workspace_with("Alpha", "Beta")
+    env = {**ENV, "GRIST_DOC_ID": "DOC1"}  # Beta is the GRIST_DOC_ID document
+    assert guided(monkeypatch, fake, "y\nc\nDoc\nn\nn\nn\n", env=env) == 0
+    out = capsys.readouterr().out
+    assert "1. Alpha\n" in out and "2. Beta (the document in GRIST_DOC_ID)" in out
+    assert "The document in GRIST_DOC_ID" not in out  # no separate option
+    assert "or C to create a new document" in out and "(1-2)" in out
+
+
+def test_the_grist_doc_id_document_is_a_separate_option_when_not_in_the_workspace(
+    monkeypatch, capsys
+):
+    fake = FakeGrist()
+    fake.workspaces = workspace_with("Alpha")
+    env = {**ENV, "GRIST_DOC_ID": "ELSEWHERE"}
+    assert guided(monkeypatch, fake, "y\nc\nDoc\nn\nn\nn\n", env=env) == 0
+    out = capsys.readouterr().out
+    assert "1. Alpha\n" in out and "2. The document in GRIST_DOC_ID" in out
+
+
+def test_picking_the_labelled_document_sets_that_one_up(monkeypatch, capsys):
+    fake = full_fake()
+    del fake.tables["Meets"]
+    fake.workspaces = workspace_with("Alpha", "Beta")
+    env = {**ENV, "GRIST_DOC_ID": "DOC0"}
+    assert guided(monkeypatch, fake, "y\n1\nn\nn\ny\n", env=env) == 0
+    assert "Meets" in fake.tables and fake.created_docs == []
