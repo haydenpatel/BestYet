@@ -42,6 +42,7 @@ class FakeGrist:
         self.workspaces = (
             workspaces if workspaces is not None else {1: [{"id": 10, "name": "Work"}]}
         )
+        self.doc_name = "Season 2025"  # what GET docs/{id} reports
         self.created_docs: list[tuple[int, str]] = []
         self.writes: list[tuple[str, str]] = []
         self.fail_on: str | None = None  # substring of "METHOD path" to answer with a 500
@@ -60,6 +61,8 @@ class FakeGrist:
             return httpx.Response(200, json=self.orgs)
         if m := re.fullmatch(r"orgs/(\d+)/workspaces", path):
             return httpx.Response(200, json=self.workspaces.get(int(m[1]), []))
+        if m := re.fullmatch(r"docs/([^/]+)", path):
+            return httpx.Response(200, json={"id": m[1], "name": self.doc_name})
         if m := re.fullmatch(r"workspaces/(\d+)", path):
             found = [w for ws in self.workspaces.values() for w in ws if w["id"] == int(m[1])]
             if not found:

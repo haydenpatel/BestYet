@@ -544,7 +544,7 @@ def test_failure_after_create_repeats_doc_id(capsys):
     err = capsys.readouterr().err
     assert "GRIST_DOC_ID=NEWDOC" in err and "without --create" in err
     assert "--- What was done ---" in err and "Created document" in err
-    assert "--- What was not done ---" in err and KEY not in err
+    assert "--- What did not complete ---" in err and KEY not in err
 
 
 def test_failure_without_create_has_no_doc_hint(capsys):
@@ -553,7 +553,7 @@ def test_failure_without_create_has_no_doc_hint(capsys):
     assert run(fake) == 1
     err = capsys.readouterr().err
     assert "without --create" not in err and "GRIST_DOC_ID=" not in err
-    assert "Run bestyet-init again" in err and "--- What was not done ---" in err
+    assert "Run bestyet-init again" in err and "--- What did not complete ---" in err
 
 
 def test_unrelated_tables_columns_not_read():
@@ -1091,7 +1091,7 @@ def test_partial_failure_lists_done_and_not_done_for_an_existing_document(capsys
     assert "The run stopped part-way." in err
     assert "--- What was done ---\n  Tables\n    - Created Meets" in err
     assert (
-        "--- What failed (may be partly applied) ---\n  Tables\n    - Add missing columns to Results: Mark"
+        "--- What did not complete ---\n  Tables\n    - Add missing columns to Results: Mark (failed; may be partly applied)"
         in err
     )
     assert err.rstrip().endswith("it only adds what is missing.")
@@ -1208,7 +1208,7 @@ def test_create_with_a_failure_a_rerun_cannot_fix_keeps_the_id_and_does_not_say_
     break_it(fake)
     assert run(fake, *CREATE, env=ENV_NO_DOC) == 1
     err = capsys.readouterr().err
-    assert problem in err and "--- What failed (may be partly applied) ---" in err and failed in err
+    assert problem in err and "(failed; may be partly applied)" in err and failed in err
     assert "id NEWDOC" in err and "GRIST_DOC_ID=NEWDOC" in err
     assert "Fix the problem described under Error in Grist" in err
     assert "To continue, re-run" not in err and "it only adds what is missing" not in err
@@ -1223,7 +1223,7 @@ def test_failed_step_is_separated_from_the_steps_not_done(capsys):
     assert run(fake) == 1
     err = capsys.readouterr().err
     assert (
-        "--- What failed (may be partly applied) ---\n  Tables\n    - Add missing columns to Results: Mark"
+        "--- What did not complete ---\n  Tables\n    - Add missing columns to Results: Mark (failed; may be partly applied)"
         in err
     )
     assert "What was not done" not in err  # it was the last step
@@ -1231,8 +1231,12 @@ def test_failed_step_is_separated_from_the_steps_not_done(capsys):
     fake.fail_on = "POST /api/docs/DOC_ID_HERE/tables"
     assert run(fake) == 1
     err = capsys.readouterr().err
-    assert "--- What failed (may be partly applied) ---\n  Tables\n    - Create Athletes" in err
-    assert "--- What was not done ---\n  Tables\n    - Create Events" in err
+    assert (
+        "--- What did not complete ---\n  Tables\n    - Create Athletes (failed; may be partly applied)\n    - Create Events"
+        in err
+    )
+    assert "(failed; may be partly applied)" in err
+    assert "Personal bests\n    - Create a 'Personal bests' page" in err  # not started: unlabelled
 
 
 def test_plan_is_grouped_in_plain_words(capsys):
@@ -1284,7 +1288,7 @@ def terminal(monkeypatch, stdin):
     monkeypatch.setattr(sys.stdout, "isatty", lambda: True, raising=False)
 
 
-def guided(monkeypatch, fake, answers, *argv, env=ENV):
+def guided(monkeypatch, fake, answers, *argv, env=ENV_NO_DOC):
     """Run the CLI in a terminal with scripted answers (no argv: the guided start)."""
     terminal(monkeypatch, Stdin(answers))
     return main(list(argv), env, fake.transport)
@@ -1292,7 +1296,7 @@ def guided(monkeypatch, fake, answers, *argv, env=ENV):
 
 def test_guided_new_document(monkeypatch, capsys):
     fake = FakeGrist()
-    answers = "y\nc\nMy Doc\ny\nn\ny\n"  # workspace, new, name, implements, no demo, apply
+    answers = "y\nMy Doc\ny\nn\ny\n"  # workspace, name, implements, no demo, apply
     assert guided(monkeypatch, fake, answers) == 0
     out = capsys.readouterr().out
     assert fake.created_docs == [(10, "My Doc")]
@@ -1313,7 +1317,7 @@ def test_guided_new_document_declined_at_the_confirmation(monkeypatch, capsys):
 
 def test_guided_default_name_and_demo_data(monkeypatch):
     fake = FakeGrist()
-    assert guided(monkeypatch, fake, "y\nc\n\nn\ny\ny\n") == 0
+    assert guided(monkeypatch, fake, "y\n\nn\ny\ny\n") == 0
     assert fake.created_docs == [(10, "BestYet")]
     assert len(fake.rows["Results"]) == len(schema.DEMO_RESULTS)
     assert len(fake.rows["Implements"]) == len(schema.EXAMPLE_IMPLEMENTS)  # demo needs them
@@ -1322,7 +1326,7 @@ def test_guided_default_name_and_demo_data(monkeypatch):
 def test_guided_existing_document(monkeypatch, capsys):
     fake = full_fake()
     del fake.tables["Meets"]
-    assert guided(monkeypatch, fake, "y\n1\nn\nn\ny\n") == 0
+    assert guided(monkeypatch, fake, "y\nn\nn\ny\n", env=ENV) == 0
     assert "Meets" in fake.tables and fake.created_docs == []
     assert "GRIST_DOC_ID=" not in capsys.readouterr().out
 
@@ -1331,7 +1335,7 @@ def test_guided_demo_is_not_offered_when_the_tables_have_rows(monkeypatch, capsy
     fake = full_fake()
     fake.rows["Athletes"] = [{"id": 1, "fields": {"Name": "A"}}]
     assert (
-        guided(monkeypatch, fake, "y\n1\nn\n") == 0
+        guided(monkeypatch, fake, "y\nn\n", env=ENV) == 0
     )  # existing, no implements; then nothing to do
     out = capsys.readouterr().out
     assert "Add demo data" not in out and "example implements" in out
@@ -1339,6 +1343,7 @@ def test_guided_demo_is_not_offered_when_the_tables_have_rows(monkeypatch, capsy
 
 def test_guided_bad_numbers_are_asked_again(monkeypatch, capsys):
     fake = FakeGrist()
+    fake.workspaces = workspace_with("Alpha")
     assert guided(monkeypatch, fake, "x\ny\n0\n7\nc\nDoc\nn\nmaybe\nn\ny\n") == 0
     out = capsys.readouterr().out
     assert "Please enter a number from 1 to 1, or C." in out
@@ -1351,7 +1356,7 @@ def test_guided_shows_the_organisation_when_there_are_several(monkeypatch, capsy
         orgs=[{"id": 1, "name": "Org One"}, {"id": 2, "name": "Org Two"}],
         workspaces={1: [{"id": 10, "name": "Work"}], 2: [{"id": 20, "name": "Home"}]},
     )
-    assert guided(monkeypatch, fake, "2\nc\nDoc\nn\nn\ny\n") == 0
+    assert guided(monkeypatch, fake, "2\nDoc\nn\nn\ny\n") == 0
     assert "2. Home (Org Two)" in capsys.readouterr().out
     assert fake.created_docs == [(20, "Doc")]
 
@@ -1397,6 +1402,7 @@ def test_guided_flags_skip_their_questions(monkeypatch, capsys):
 
 def test_guided_workspace_flag_skips_only_the_workspace_question(monkeypatch, capsys):
     fake = FakeGrist()
+    fake.workspaces = workspace_with("Alpha")
     assert guided(monkeypatch, fake, "c\nDoc\nn\nn\ny\n", "--workspace", "Work") == 0
     out = capsys.readouterr().out
     assert "Which workspace" not in out
@@ -1414,9 +1420,9 @@ def test_guided_dry_run_shows_the_plan_and_writes_nothing(monkeypatch, capsys):
 
 def test_terminal_without_flags_starts_the_guide(monkeypatch, capsys):
     fake = FakeGrist()
-    monkeypatch.setattr(sys, "stdin", Stdin("y\nc\nDoc\nn\nn\ny\n", tty=True))
+    monkeypatch.setattr(sys, "stdin", Stdin("y\nDoc\nn\nn\ny\n", tty=True))
     monkeypatch.setattr(sys, "stdout", TtyOut())
-    assert main([], ENV, fake.transport) == 0
+    assert main([], ENV_NO_DOC, fake.transport) == 0
     assert fake.created_docs == [(10, "Doc")]
 
 
@@ -1483,7 +1489,7 @@ def test_a_lone_workspace_is_confirmed_not_assumed(monkeypatch, capsys):
 
 def test_several_workspaces_are_listed_without_a_yes_no_question(monkeypatch, capsys):
     fake = FakeGrist(workspaces={1: [{"id": 10, "name": "Work"}, {"id": 11, "name": "Home"}]})
-    assert guided(monkeypatch, fake, "2\nc\nDoc\nn\nn\ny\n") == 0
+    assert guided(monkeypatch, fake, "2\nDoc\nn\nn\ny\n") == 0
     out = capsys.readouterr().out
     assert "2. Home" in out and "Use workspace" not in out
     assert fake.created_docs == [(11, "Doc")]
@@ -1507,13 +1513,6 @@ def test_guided_lists_the_workspace_documents_and_sets_up_the_chosen_one(monkeyp
     assert "GRIST_DOC_ID" not in out.split("--- Plan ---")[0].split("2. Beta")[1]  # unset
     assert "Meets" in fake.tables and fake.created_docs == []
     assert any("/api/docs/DOC1/" in path for _, path in fake.writes)  # the chosen document
-
-
-def test_guided_offers_the_grist_doc_id_document_last(monkeypatch, capsys):
-    fake = FakeGrist()
-    fake.workspaces = workspace_with("Alpha")
-    assert guided(monkeypatch, fake, "y\nc\nDoc\nn\nn\nn\n") == 0
-    assert "2. The document in GRIST_DOC_ID" in capsys.readouterr().out
 
 
 def test_guided_duplicate_name_a_no_asks_for_another_name(monkeypatch, capsys):
@@ -1670,7 +1669,7 @@ def test_guided_org_alone_picks_from_that_organisation(monkeypatch, capsys):
         orgs=[{"id": 1, "name": "Org One"}, {"id": 2, "name": "Org Two"}],
         workspaces={1: [{"id": 10, "name": "Work"}], 2: [{"id": 20, "name": "Home"}]},
     )
-    assert guided(monkeypatch, fake, "y\nc\nDoc\nn\nn\ny\n", "--org", "Org Two") == 0
+    assert guided(monkeypatch, fake, "y\nDoc\nn\nn\ny\n", "--org", "Org Two") == 0
     out = capsys.readouterr().out
     assert "Use workspace 'Home'?" in out and "Work" not in out
     assert fake.created_docs == [(20, "Doc")]
@@ -1685,14 +1684,14 @@ def test_guided_org_that_does_not_exist_says_so(monkeypatch, capsys):
 def test_guided_existing_document_with_other_tables_asks_up_front(monkeypatch, capsys):
     fake = full_fake({**full_tables(), "Notes": {"A": {"type": "Text"}}})
     del fake.tables["Meets"]
-    assert guided(monkeypatch, fake, "y\n1\ny\nn\nn\ny\n") == 0
+    assert guided(monkeypatch, fake, "y\ny\nn\nn\ny\n", env=ENV) == 0
     out = capsys.readouterr().out
     assert "not part of BestYet (Notes)" in out and out.index("Notes") < out.index(
         "example implements"
     )
     assert "Meets" in fake.tables
     fake = full_fake({**full_tables(), "Notes": {"A": {"type": "Text"}}})
-    assert guided(monkeypatch, fake, "y\n1\nn\n") == 0
+    assert guided(monkeypatch, fake, "y\nn\n", env=ENV) == 0
     assert "Nothing was changed" in capsys.readouterr().out and fake.writes == []
 
 
@@ -1705,10 +1704,7 @@ def test_behind_the_scenes_steps_are_left_out_of_the_plan_but_named_when_they_fa
     fake.fail_on = "POST /api/docs/DOC_ID_HERE/tables/Results/columns"
     assert run(fake) == 1
     err = capsys.readouterr().err
-    assert (
-        "--- What failed (may be partly applied) ---\n  Calculated columns\n    - Results: Value"
-        in err
-    )
+    assert "--- What did not complete ---\n  Calculated columns\n    - Results: Value" in err
 
 
 def test_failed_default_table_removal_is_reported_not_planned(capsys):
@@ -1720,32 +1716,50 @@ def test_failed_default_table_removal_is_reported_not_planned(capsys):
     assert "--allow-existing-tables" in out.err
 
 
-def test_the_grist_doc_id_document_is_labelled_in_the_list_not_listed_twice(monkeypatch, capsys):
-    fake = FakeGrist()
-    fake.workspaces = workspace_with("Alpha", "Beta")
-    env = {**ENV, "GRIST_DOC_ID": "DOC1"}  # Beta is the GRIST_DOC_ID document
-    assert guided(monkeypatch, fake, "y\nc\nDoc\nn\nn\nn\n", env=env) == 0
-    out = capsys.readouterr().out
-    assert "1. Alpha\n" in out and "2. Beta (the document in GRIST_DOC_ID)" in out
-    assert "The document in GRIST_DOC_ID" not in out  # no separate option
-    assert "or C to create a new document" in out and "(1-2)" in out
-
-
-def test_the_grist_doc_id_document_is_a_separate_option_when_not_in_the_workspace(
-    monkeypatch, capsys
-):
-    fake = FakeGrist()
-    fake.workspaces = workspace_with("Alpha")
-    env = {**ENV, "GRIST_DOC_ID": "ELSEWHERE"}
-    assert guided(monkeypatch, fake, "y\nc\nDoc\nn\nn\nn\n", env=env) == 0
-    out = capsys.readouterr().out
-    assert "1. Alpha\n" in out and "2. The document in GRIST_DOC_ID" in out
-
-
-def test_picking_the_labelled_document_sets_that_one_up(monkeypatch, capsys):
+def test_grist_doc_id_is_offered_first_by_name(monkeypatch, capsys):
     fake = full_fake()
     del fake.tables["Meets"]
-    fake.workspaces = workspace_with("Alpha", "Beta")
-    env = {**ENV, "GRIST_DOC_ID": "DOC0"}
-    assert guided(monkeypatch, fake, "y\n1\nn\nn\ny\n", env=env) == 0
+    assert guided(monkeypatch, fake, "y\nn\nn\ny\n", env=ENV) == 0
+    out = capsys.readouterr().out
+    assert "GRIST_DOC_ID is set to the document 'Season 2025'. Set up that document? [Y/n]" in out
+    assert "Which workspace" not in out and "Use workspace" not in out  # straight to the examples
     assert "Meets" in fake.tables and fake.created_docs == []
+    assert DOC not in out
+
+
+def test_saying_no_to_grist_doc_id_continues_with_the_workspace_questions(monkeypatch, capsys):
+    fake = FakeGrist()
+    assert guided(monkeypatch, fake, "n\ny\nNew one\nn\nn\ny\n", env=ENV) == 0
+    out = capsys.readouterr().out
+    assert "Use workspace 'Work'?" in out and fake.created_docs == [(10, "New one")]
+    assert "1. Update GRIST_DOC_ID in your settings" in out
+    assert "from the old document to the new one" in out
+    assert "GRIST_DOC_ID=NEWDOC" in out and "keep using the old document" in out
+
+
+def test_without_grist_doc_id_the_next_step_is_just_to_add_it(monkeypatch, capsys):
+    assert guided(monkeypatch, FakeGrist(), "y\nNew one\nn\nn\ny\n") == 0
+    out = capsys.readouterr().out
+    assert "Add this line to your settings" in out and "old document" not in out
+
+
+def test_flag_form_create_with_grist_doc_id_set_also_warns_about_the_old_document(capsys):
+    assert run(FakeGrist(), *CREATE, env=ENV) == 0
+    assert "from the old document to the new one" in capsys.readouterr().out
+
+
+def test_failure_after_create_says_grist_doc_id_still_points_at_the_old_document(capsys):
+    fake = FakeGrist()
+    fake.fail_on = "POST /api/docs/NEWDOC/tables"
+    assert run(fake, *CREATE, env=ENV) == 1
+    err = capsys.readouterr().err
+    assert "GRIST_DOC_ID=NEWDOC in your settings (it still points at the old document)" in err
+
+
+def test_unreadable_grist_doc_id_gets_the_usual_readable_error(monkeypatch, capsys):
+    monkeypatch.setattr(sys, "stdin", Stdin("", tty=True))
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True, raising=False)
+    assert main([], ENV, reply(404, "not found")) == 1
+    assert "could not find the document (HTTP 404)" in capsys.readouterr().err
+    assert main([], ENV, reply(401, "no")) == 1
+    assert "rejected the API key" in capsys.readouterr().err

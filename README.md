@@ -24,7 +24,7 @@ The goals for version 1 (see [Status and Limitations](#status-and-limitations) f
 
 1. **Settings.** Set `GRIST_URL` and `GRIST_API_KEY` (see [Configuration](#configuration)).
 2. **Run `bestyet-init`** to set up the Grist document. It only adds what is missing, so running it again is safe.
-   - **Guided:** run it with no options in a terminal. It asks what it needs, shows the plan and asks before changing anything. After creating a document it prints the `GRIST_DOC_ID=...` line to add to your settings.
+   - **Guided:** run it with no options in a terminal. If `GRIST_DOC_ID` is set it first offers to set up that document; otherwise (or if you decline) it asks for the workspace, then which document or a new one. It shows the plan and asks before changing anything. After creating a document it prints the `GRIST_DOC_ID=...` line to add to your settings.
    - **With flags:** for scripts, containers and repeat runs. Without a terminal it never asks, so give every value as a flag. To set up an existing document this way, set `GRIST_DOC_ID` too.
 
 | Flag | What it does | Required | Default |

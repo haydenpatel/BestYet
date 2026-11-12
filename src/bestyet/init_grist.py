@@ -71,6 +71,15 @@ class PartialFailure(InitError):
         """A plain re-run (which only adds) is the fix: the failure was a Grist call."""
         return isinstance(self.error, GristError)
 
+    def _incomplete(self) -> list[tuple[str, list[str]]]:
+        """What did not complete, in order; the failed step is marked on its lines."""
+        merged: dict[str, list[str]] = {}
+        for heading, lines in grouped(self.pending[:1], hidden=True):
+            merged[heading] = [f"{line} (failed; may be partly applied)" for line in lines]
+        for heading, lines in grouped(self.pending[1:], hidden=True):
+            merged.setdefault(heading, []).extend(lines)
+        return list(merged.items())
+
     def report(self, config: Config, steps: Sequence[str]) -> str:
         reason = explain(self.error, config, "document") if self.rerun_safe else str(self.error)
         done = ([("Document", self.done)] if self.done else []) + grouped(
@@ -79,8 +88,7 @@ class PartialFailure(InitError):
         return error_report(
             reason,
             done=done,
-            failed=grouped(self.pending[:1], hidden=True),
-            not_done=grouped(self.pending[1:], hidden=True),
+            incomplete=self._incomplete(),
             steps=[*steps, *self.attention],
         )
 
@@ -92,16 +100,14 @@ class ErrorReport(InitError):
 def error_report(
     reason: str,
     done: Sequence[tuple[str, Sequence[str]]] = (),
-    failed: Sequence[tuple[str, Sequence[str]]] = (),
-    not_done: Sequence[tuple[str, Sequence[str]]] = (),
+    incomplete: Sequence[tuple[str, Sequence[str]]] = (),
     steps: Sequence[str] = (),
 ) -> str:
     """Labelled blocks, blank line between, empty blocks left out."""
     blocks = [["--- Error ---", reason, "The run stopped part-way."]]
     for title, groups in (
         ("What was done", done),
-        ("What failed (may be partly applied)", failed),
-        ("What was not done", not_done),
+        ("What did not complete", incomplete),
     ):
         if groups:
             blocks.append([f"--- {title} ---", *group_lines(groups)])
@@ -152,7 +158,7 @@ def explain(e: GristError, config: Config, what: str = "") -> str:
             "Grist could not find that workspace (HTTP 404). Check --workspace and that the API "
             "key's user can see it."
         )
-    document_request = e.method == "GET" and re.fullmatch(r"docs/[^/]+/tables", e.path or "")
+    document_request = e.method == "GET" and re.fullmatch(r"docs/[^/]+(/tables)?", e.path or "")
     if e.status == 404 and what == "document" and document_request:
         return (
             "Grist could not find the document (HTTP 404). Check GRIST_DOC_ID and that the API "
@@ -952,7 +958,7 @@ def parse_args(argv: Sequence[str] | None, can_ask: bool = False) -> argparse.Na
             "refused unless Athletes, Meets and Results are all empty"
         ),
     )
-    p.set_defaults(doc_id=None)  # set by the questions, not by flags
+    p.set_defaults(doc_id=None, old_doc_id=None)  # set by the questions, not by flags
     args = p.parse_args(argv)
     if args.check:
         used = [
@@ -1021,10 +1027,14 @@ def rerun_hint(doc_id: str) -> str:
     )
 
 
-def next_steps_after_create(doc_id: str, rerun_safe: bool) -> list[str]:
-    """What to do when a run stopped after the document was created."""
+def next_steps_after_create(doc_id: str, rerun_safe: bool, old_doc: bool = False) -> list[str]:
+    """What to do when a run stopped after the document was created. `old_doc`: GRIST_DOC_ID
+    is set and still points at another document."""
+    where = (
+        "in your settings (it still points at the old document)" if old_doc else "in your settings"
+    )
     use = (
-        f"run bestyet-init without --create, with GRIST_DOC_ID={doc_id} in your settings "
+        f"run bestyet-init without --create, with GRIST_DOC_ID={doc_id} {where} "
         f"(add --allow-existing-tables if {DEFAULT_TABLE} is still there)"
     )
     if rerun_safe:
@@ -1177,59 +1187,60 @@ def guide(args: argparse.Namespace, config: Config, client_for, out, stdin) -> b
     _section(out, "Questions")
     if not args.yes:
         print("Nothing is changed until you confirm the plan.\n", file=out)
-    doc_id = config.grist_doc_id
+    doc_id = None
     create = args.create
-    with _explaining(config, "workspace"), client_for("") as admin:
-        if not args.workspace:
-            args.workspace = _choose_workspace(admin, args.org, out, stdin)
-            if args.workspace is None:
-                print(
-                    "There is no other workspace visible to this API key. Create one in Grist, then run "
-                    "this again. Nothing was changed.",
-                    file=out,
-                )
-                return False
-        ws_id, label = resolve_workspace_label(admin, args.workspace, args.org)
-        if not create:  # which document: one that is already there, or a new one
-            docs = existing_docs(admin, ws_id)
-            here = any(str(d["id"]) == str(doc_id) for d in docs)
-            labels = [
-                f"{d['name']} (the document in GRIST_DOC_ID)"
-                if here and str(d["id"]) == str(doc_id)
-                else d["name"]
-                for d in docs
-            ]
-            if doc_id and not here:
-                labels.append("The document in GRIST_DOC_ID")
-            if not labels:
-                create = True
-            else:
-                pick = _ask_existing(
-                    out, f"Do you want to use an existing document in {label}?", labels, stdin
-                )
-                create = pick is None
-                if pick is not None and pick < len(docs):
-                    doc_id = docs[pick]["id"]  # else: the GRIST_DOC_ID document
-        if create:
-            while True:
-                given = bool(args.name)
-                name = args.name or _ask(out, "Name for the new document [BestYet]: ", stdin)
-                args.name = name or "BestYet"
-                clash = name_clash(admin, ws_id, args.name)
-                if not clash:
-                    break
-                question = (
-                    f"A document named {clash['name']!r} already exists in this workspace. "
-                    "Use it instead?"
-                )
-                if _ask_yes_no(out, question, stdin, default=True):
-                    create, doc_id = False, clash["id"]  # set that one up (it only adds)
-                    break
-                if given:
-                    print("Nothing was changed.", file=out)
+    if config.grist_doc_id and not create and not args.workspace and not args.org:
+        with _explaining(config, "document"), client_for(config.grist_doc_id) as client:
+            name = client.document().get("name", "")
+        question = f"GRIST_DOC_ID is set to the document {name!r}. Set up that document?"
+        if _ask_yes_no(out, question, stdin, default=True):
+            doc_id = config.grist_doc_id
+    if doc_id is None:
+        with _explaining(config, "workspace"), client_for("") as admin:
+            if not args.workspace:
+                args.workspace = _choose_workspace(admin, args.org, out, stdin)
+                if args.workspace is None:
+                    print(
+                        "There is no other workspace visible to this API key. Create one in "
+                        "Grist, then run this again. Nothing was changed.",
+                        file=out,
+                    )
                     return False
-                args.name = None
-        args.create = create
+            ws_id, label = resolve_workspace_label(admin, args.workspace, args.org)
+            if not create:  # which document: one that is already there, or a new one
+                docs = existing_docs(admin, ws_id)
+                if not docs:
+                    create = True
+                else:
+                    pick = _ask_existing(
+                        out,
+                        f"Do you want to use an existing document in {label}?",
+                        [d["name"] for d in docs],
+                        stdin,
+                    )
+                    create = pick is None
+                    if pick is not None:
+                        doc_id = docs[pick]["id"]
+            if create:
+                while True:
+                    given = bool(args.name)
+                    name = args.name or _ask(out, "Name for the new document [BestYet]: ", stdin)
+                    args.name = name or "BestYet"
+                    clash = name_clash(admin, ws_id, args.name)
+                    if not clash:
+                        break
+                    question = (
+                        f"A document named {clash['name']!r} already exists in this workspace. "
+                        "Use it instead?"
+                    )
+                    if _ask_yes_no(out, question, stdin, default=True):
+                        create, doc_id = False, clash["id"]  # set that one up (it only adds)
+                        break
+                    if given:
+                        print("Nothing was changed.", file=out)
+                        return False
+                    args.name = None
+    args.create = create
     demo_allowed = True
     if not create:
         args.doc_id = doc_id
@@ -1298,6 +1309,7 @@ def run(
             _set_up_existing(client, config, args, out)
         return
 
+    args.old_doc_id = config.grist_doc_id  # set and not used: it keeps pointing at the old one
     with _explaining(config, "workspace"), client_for("") as admin:
         workspace_id, workspace_label = resolve_workspace_label(admin, args.workspace, args.org)
     lead = [f"Create {args.name!r} in {workspace_label}"]
@@ -1347,7 +1359,7 @@ def run(
                 doc=(args.name, workspace_label),
             )
     except PartialFailure as e:
-        steps = next_steps_after_create(doc_id, e.rerun_safe)
+        steps = next_steps_after_create(doc_id, e.rerun_safe, bool(args.old_doc_id))
         raise ErrorReport(e.report(config, steps)) from None
     except (GristError, InitError) as e:
         safe = isinstance(e, GristError)
@@ -1356,7 +1368,7 @@ def run(
             error_report(
                 reason,
                 done=[("Document", done)],
-                steps=next_steps_after_create(doc_id, safe),
+                steps=next_steps_after_create(doc_id, safe, bool(args.old_doc_id)),
             )
         ) from None
     except KeyboardInterrupt:
@@ -1519,12 +1531,24 @@ def _finish(
         _section(out, "Next steps")
         check = "run bestyet-init --check to confirm the document matches the contract."
         if doc_id:
-            print(
-                "  1. Add this line to your settings (environment or .env); this script saved "
-                "nothing:",
-                file=out,
-            )
-            print(f"       GRIST_DOC_ID={doc_id}", file=out)
+            if args.old_doc_id:
+                print(
+                    "  1. Update GRIST_DOC_ID in your settings (environment or .env) from the "
+                    "old document to the new one (this script saved nothing):",
+                    file=out,
+                )
+                print(f"       GRIST_DOC_ID={doc_id}", file=out)
+                print(
+                    "     Until you do, bestyet-init and the app keep using the old document.",
+                    file=out,
+                )
+            else:
+                print(
+                    "  1. Add this line to your settings (environment or .env); this script "
+                    "saved nothing:",
+                    file=out,
+                )
+                print(f"       GRIST_DOC_ID={doc_id}", file=out)
             print(f"  2. Then {check}", file=out)
         else:
             print(f"  - {check[0].upper()}{check[1:]}", file=out)
