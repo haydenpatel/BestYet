@@ -27,7 +27,9 @@ import argparse
 import json
 import sys
 from collections.abc import Collection, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass, field
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -39,6 +41,89 @@ from bestyet.grist import GristClient, GristError
 
 class InitError(Exception):
     """A failure with a message that is safe to print as is."""
+
+
+class PartialFailure(InitError):
+    """The run stopped part-way: what was done, what failed and what was not done."""
+
+    def __init__(self, done: Sequence[str], pending: Sequence[str], error: Exception):
+        super().__init__(str(error))
+        self.done, self.pending, self.error = list(done), list(pending), error
+
+    @property
+    def rerun_safe(self) -> bool:
+        """A plain re-run (which only adds) is the fix: the failure was a Grist call."""
+        return isinstance(self.error, GristError)
+
+    def report(self, config: Config, fix: str) -> str:
+        reason = explain(self.error, config, "document") if self.rerun_safe else str(self.error)
+        lines = [reason, "The run stopped part-way."]
+        lines.append("Done before the failure:" + ("" if self.done else " nothing"))
+        lines += [f"  - {d}" for d in self.done]
+        lines.append("Not done (the first step failed):")
+        lines += [f"  - {p}" for p in self.pending]
+        if fix:
+            lines.append(fix)
+        return "\n".join(lines)
+
+
+_CAUSES = {
+    "dns": "the host name could not be resolved (DNS)",
+    "refused": "the connection was refused (is the server running, and is the port right?)",
+    "timeout": "the connection timed out",
+    "tls": "a TLS or certificate problem",
+    "other": "the connection failed",
+}
+
+
+def explain(e: GristError, config: Config, what: str = "") -> str:
+    """A readable message for a failed Grist call. `what` is "workspace" or "document" when
+    a 404 can be pinned on one. Names the host only: never credentials, path, query or key."""
+    if e.status == 0:
+        host = urlsplit(config.grist_url).netloc.rpartition("@")[2]
+        return (
+            f"Could not reach Grist at {host}: {_CAUSES.get(e.cause or '', _CAUSES['other'])}. "
+            "Check GRIST_URL, your network and that the Grist server is up."
+        )
+    if e.cause in ("redirect", "invalid_json"):
+        return (
+            "Grist gave an unexpected reply. Check that GRIST_URL is the address of a Grist "
+            "server (its final http(s) address, without a path)."
+        )
+    if e.status == 401:
+        return "Grist rejected the API key (HTTP 401). Check GRIST_API_KEY."
+    if e.status == 403:
+        target = f" the {what}" if what else " it"
+        return (
+            "Grist denied access (HTTP 403). Check that the API key's user can access"
+            + target
+            + "."
+        )
+    if e.status == 404 and what == "workspace":
+        return (
+            "Grist could not find that workspace (HTTP 404). Check --workspace and that the API "
+            "key's user can see it."
+        )
+    if e.status == 404 and what == "document":
+        return (
+            "Grist could not find the document (HTTP 404). Check GRIST_DOC_ID and that the API "
+            "key's user can access it."
+        )
+    if e.status >= 500:
+        return (
+            f"Grist reported a server error (HTTP {e.status}: {e.message}). Try again; "
+            "if it persists, check the Grist server."
+        )
+    return str(e)
+
+
+@contextmanager
+def _explaining(config: Config, what: str):
+    """Turn a GristError in the block into an InitError with a readable message."""
+    try:
+        yield
+    except GristError as e:
+        raise InitError(explain(e, config, what)) from None
 
 
 # REST payloads. Kept small and separate: column `fields`, Choice `widgetOptions` JSON,
@@ -85,6 +170,11 @@ def _check_ids(sent: Sequence[str], got: Sequence[str]) -> None:
 
 class Step:
     def describe(self) -> str:
+        """What the step will do, for the plan."""
+        raise NotImplementedError
+
+    def created(self) -> str:
+        """What the step added, for the summary."""
         raise NotImplementedError
 
     def apply(self, client: GristClient) -> None:
@@ -97,8 +187,10 @@ class CreateTable(Step):
     columns: tuple[schema.Column, ...]
 
     def describe(self) -> str:
-        names = ", ".join(c.id for c in self.columns)
-        return f"create table {self.table.id} ({names})"
+        return f"Create table {self.table.id} ({len(self.columns)} columns)"
+
+    def created(self) -> str:
+        return f"Created table {self.table.id}"
 
     def apply(self, client: GristClient) -> None:
         sent = [self.table.id]
@@ -111,8 +203,13 @@ class AddColumns(Step):
     columns: tuple[schema.Column, ...]
 
     def describe(self) -> str:
-        names = ", ".join(c.id for c in self.columns)
-        return f"add columns to {self.table}: {names}"
+        return f"Add missing columns to {self.table}: {self._names()}"
+
+    def created(self) -> str:
+        return f"Added columns to {self.table}: {self._names()}"
+
+    def _names(self) -> str:
+        return ", ".join(c.id for c in self.columns)
 
     def apply(self, client: GristClient) -> None:
         sent = [c.id for c in self.columns]
@@ -144,7 +241,13 @@ class SetVisibleCols(Step):
     items: tuple[tuple[str, str, str], ...]  # (column id, target table id, target column id)
 
     def describe(self) -> str:
-        return f"show names in {self.table} Ref columns: {', '.join(i[0] for i in self.items)}"
+        return f"Show names instead of ids in {self.table}: {self._names()}"
+
+    def created(self) -> str:
+        return f"Set {self.table} columns to show names: {self._names()}"
+
+    def _names(self) -> str:
+        return ", ".join(i[0] for i in self.items)
 
     def apply(self, client: GristClient) -> None:
         have = _refs(client, self.table)
@@ -187,9 +290,12 @@ class CreateSummaryPage(Step):
     def describe(self) -> str:
         s = self.summary
         return (
-            f"create page {s.page!r} showing summary table {s.id} "
+            f"Create the {s.page!r} page with summary table {s.id} "
             f"(grouped by {', '.join(s.group_by)})"
         )
+
+    def created(self) -> str:
+        return f"Created the {self.summary.page!r} page with summary table {self.summary.id}"
 
     def apply(self, client: GristClient) -> None:
         s = self.summary
@@ -243,7 +349,10 @@ class SeedEvents(Step):
     """Add the example Events whose Name is not there yet."""
 
     def describe(self) -> str:
-        return "add example Events rows (those whose Name is missing)"
+        return "Add the example Events that are missing (matched by Name)"
+
+    def created(self) -> str:
+        return "Added the example Events"
 
     def apply(self, client: GristClient) -> None:
         # Re-read: the plan was shown before confirmation, and Grist can be edited meanwhile.
@@ -256,7 +365,10 @@ class SeedImplements(Step):
     """Add the example Implements whose Event and Grade pair is not there yet."""
 
     def describe(self) -> str:
-        return "add example Implements rows (those whose Event and Grade are missing)"
+        return "Add the example Implements that are missing (matched by Event and Grade)"
+
+    def created(self) -> str:
+        return "Added the example Implements"
 
     def apply(self, client: GristClient) -> None:
         events = client.records("Events")
@@ -299,9 +411,12 @@ class LoadDemoData(Step):
 
     def describe(self) -> str:
         return (
-            f"add demo data: {len(schema.DEMO_ATHLETES)} athletes, {len(schema.DEMO_MEETS)} "
+            f"Add demo data: {len(schema.DEMO_ATHLETES)} athletes, {len(schema.DEMO_MEETS)} "
             f"meets, {len(schema.DEMO_RESULTS)} results (only if those tables are empty)"
         )
+
+    def created(self) -> str:
+        return "Added demo data"
 
     def apply(self, client: GristClient) -> None:
         _require_empty(client, DEMO_TABLES)  # re-read: the document can change after the plan
@@ -349,6 +464,7 @@ class LoadDemoData(Step):
 @dataclass
 class Plan:
     steps: list[Step] = field(default_factory=list)
+    present: list[str] = field(default_factory=list)  # contract tables already in the document
     notes: list[str] = field(default_factory=list)  # reported, never acted on
     conflicts: list[str] = field(default_factory=list)  # case-only id clashes: the run fails
 
@@ -405,7 +521,7 @@ def _diff_columns(
         elif actual_cols[found].get("type") != c.type:
             plan.notes.append(
                 f"{table.id}.{c.id} has type {actual_cols[found].get('type')}, "
-                f"contract says {c.type}; left as is"
+                f"the contract says {c.type}"
             )
     return missing
 
@@ -431,7 +547,7 @@ def build_plan(
     Grist keeps ids unique ignoring case, so ids are matched ignoring case. A case-only
     difference is never added or renamed: it is a conflict the owner must fix in Grist.
     """
-    plan = Plan()
+    plan = Plan(present=sorted(actual))
     tables = {t.lower(): t for t in actual}
     formula_steps: list[Step] = []
     visible_steps: list[Step] = []
@@ -522,14 +638,21 @@ def resolve_workspace(client: GristClient, workspace: str, org: str | None = Non
     if org is not None:
         orgs = [o for o in orgs if str(o["id"]) == org or o.get("name") == org]
         if not orgs:
-            raise InitError(f"organisation {org!r} not found")
+            raise InitError(
+                f"Organisation {org!r} not found. Check --org (an id or exact name) and that "
+                "the API key's user can see it."
+            )
     matches = [w for o in orgs for w in client.workspaces(o["id"]) if w.get("name") == workspace]
     if not matches:
-        raise InitError(f"workspace {workspace!r} not found")
+        raise InitError(
+            f"Workspace {workspace!r} not found. Check --workspace (an id or exact name, "
+            "with --org if the name is used in several organisations) and that the API key's "
+            "user can see it."
+        )
     if len(matches) > 1:
         ids = ", ".join(str(w["id"]) for w in matches)
         raise InitError(
-            f"workspace name {workspace!r} is ambiguous (ids: {ids}); use the id or --org"
+            f"Workspace name {workspace!r} is ambiguous (ids: {ids}); use the id or --org"
         )
     return int(matches[0]["id"])
 
@@ -614,8 +737,9 @@ def next_step(allow_existing: bool) -> str:
 
 def rerun_hint(doc_id: str) -> str:
     return (
-        f"Document {doc_id} was created; re-run without --create using GRIST_DOC_ID={doc_id} "
-        f"(add --allow-existing-tables if {DEFAULT_TABLE} is still there)"
+        f"The document was created (id {doc_id}). To continue, re-run without --create and "
+        f"with GRIST_DOC_ID={doc_id} (add --allow-existing-tables if {DEFAULT_TABLE} is still "
+        "there); it only adds what is missing."
     )
 
 
@@ -670,54 +794,63 @@ def run(
         return GristClient(config.grist_url, doc_id, config.grist_api_key, transport=transport)
 
     if args.check:
-        with client_for(config.grist_doc_id) as client:
+        with _explaining(config, "document"), client_for(config.grist_doc_id) as client:
             differences = check_document(client)
         if differences:
             print(format_differences(differences), file=out)
-            raise InitError("document differs from the contract")
-        print("ok: the document matches the contract", file=out)
+            print(
+                "Running bestyet-init without --check adds what is missing; other differences "
+                "(a changed type or name, say) need fixing in Grist.",
+                file=out,
+            )
+            n = len(differences)
+            raise InitError(
+                f"the document has {n} difference{'' if n == 1 else 's'} from the contract"
+            )
+        print("The document matches the BestYet contract: no differences.", file=out)
         return
 
     if not args.create:
         if not config.grist_doc_id:
             raise InitError("GRIST_DOC_ID is missing (or use --create)")
-        with client_for(config.grist_doc_id) as client:
-            _set_up_existing(client, args, out)
+        with _explaining(config, "document"), client_for(config.grist_doc_id) as client:
+            _set_up_existing(client, config, args, out)
         return
 
-    with client_for("") as admin:
+    with _explaining(config, "workspace"), client_for("") as admin:
         workspace_id = resolve_workspace(admin, args.workspace, args.org)
     lead = [
-        f"create document {args.name!r} in workspace {workspace_id}",
+        f"Create document {args.name!r} in workspace {workspace_id}",
         (
-            f"then, if Grist's default table {DEFAULT_TABLE} is untouched and empty "
-            "(only columns A, B, C, no rows), remove it"
+            f"Then remove Grist's default table {DEFAULT_TABLE} if it is untouched "
+            "(no rows, only columns A, B, C)"
         ),
     ]
     # A new document is empty apart from that default table, so the plan is the full contract.
     plan = build_plan({}, seed_implements=args.seed_implements, demo_data=args.demo_data)
     if not _show_plan(plan, lead, args, out) or args.dry_run or not _confirm(args, out):
         return
-    with client_for("") as admin:
+    with _explaining(config, "workspace"), client_for("") as admin:
         doc_id = admin.create_doc(workspace_id, args.name)
-    print(f"done: created document {args.name!r}", file=out)
-    print(f"document id: {doc_id}", file=out)
-    print("put it in GRIST_DOC_ID; it is not saved anywhere", file=out)
+    print(f"Created document {args.name!r} (id {doc_id}).", file=out)
+    done = [f"Created document {args.name!r} (id {doc_id})"]
     try:
         with client_for(doc_id) as client:
             removed, warning = remove_default_table(client)
             if removed:
-                print(f"done: removed Grist's default table {DEFAULT_TABLE}", file=out)
-            if warning:
-                print(f"warning: {warning}", file=out)
-            _apply(plan, client, [warning] if warning else [], args, out)
-    except (GristError, InitError) as e:
-        raise InitError(f"{e}. {rerun_hint(doc_id)}") from None
+                done.append(f"Removed Grist's empty default table {DEFAULT_TABLE}")
+            _apply(plan, client, [warning] if warning else [], args, out, done, doc_id)
+    except PartialFailure as e:
+        raise InitError(e.report(config, rerun_hint(doc_id))) from None
+    except GristError as e:
+        raise InitError(f"{explain(e, config, 'document')}\n{rerun_hint(doc_id)}") from None
+    except InitError as e:
+        raise InitError(f"{e}\n{rerun_hint(doc_id)}") from None
     except KeyboardInterrupt:
         raise Interrupted(f"aborted. {rerun_hint(doc_id)}") from None
 
 
-def _set_up_existing(client: GristClient, args: argparse.Namespace, out) -> None:
+def _set_up_existing(client: GristClient, config: Config, args: argparse.Namespace, out) -> None:
     tables = client.tables()
     extra = unrelated_tables(tables)
     if extra and not args.allow_existing_tables:
@@ -728,7 +861,7 @@ def _set_up_existing(client: GristClient, args: argparse.Namespace, out) -> None
                 "--create avoids this"
             )
         raise InitError(
-            "document has tables that are not part of BestYet ("
+            "The document has tables that are not part of BestYet ("
             + ", ".join(extra)
             + "); pass --allow-existing-tables to add to it anyway"
             + hint
@@ -750,32 +883,44 @@ def _set_up_existing(client: GristClient, args: argparse.Namespace, out) -> None
         args.seed_implements,
         args.demo_data,
     )
-    for w in warnings:
-        print(f"warning: {w}", file=out)
     if not _show_plan(plan, [], args, out) or args.dry_run or not _confirm(args, out):
         _finish(plan, warnings, args, out)
         return
     try:
         _apply(plan, client, warnings, args, out)
+    except PartialFailure as e:
+        fix = "Fix the cause, then re-run: it only adds what is missing." if e.rerun_safe else ""
+        raise InitError(e.report(config, fix)) from None
     except KeyboardInterrupt:
         raise Interrupted("aborted; re-run to add what is still missing") from None
 
 
 def _show_plan(plan: Plan, lead: Sequence[str], args: argparse.Namespace, out) -> bool:
     """Print notes, conflicts and the whole plan. Returns False when there is nothing to do."""
-    for note in plan.notes:
-        print(f"note: {note}", file=out)
-    for conflict in plan.conflicts:
-        print(f"warning: {conflict}; left untouched", file=out)
+    if plan.notes:
+        print(
+            "Left as is (differs from the contract; this script never changes existing columns):",
+            file=out,
+        )
+        for note in plan.notes:
+            print(f"  - {note}", file=out)
+    if plan.conflicts:
+        print("Needs a manual fix in Grist (this script changes nothing for these):", file=out)
+        for conflict in plan.conflicts:
+            print(f"  - {conflict}", file=out)
     lines = [*lead, *(s.describe() for s in plan.steps)]
     if not lines:
-        print("nothing to do: the document already has everything this script adds", file=out)
+        print(
+            "Nothing to do: the document already has everything this script adds. "
+            "To verify it against the contract, run bestyet-init --check.",
+            file=out,
+        )
         return False
-    print("plan:", file=out)
+    print("Plan:", file=out)
     for line in lines:
         print(f"  - {line}", file=out)
     if args.dry_run:
-        print("dry run: nothing was changed", file=out)
+        print("Dry run: nothing was changed. Run again without --dry-run to apply.", file=out)
     return True
 
 
@@ -795,24 +940,69 @@ def _confirm(args: argparse.Namespace, out) -> bool:
         print(file=out)  # EOF: end the prompt line
     if answer.strip().lower() in ("y", "yes"):
         return True
-    print("not applied: nothing was changed", file=out)
+    print("Not applied: nothing was changed.", file=out)
     return False
 
 
 def _apply(
-    plan: Plan, client: GristClient, warnings: Sequence[str], args: argparse.Namespace, out
+    plan: Plan,
+    client: GristClient,
+    warnings: Sequence[str],
+    args: argparse.Namespace,
+    out,
+    done: Sequence[str] = (),
+    doc_id: str | None = None,
 ) -> None:
-    for step in plan.steps:
-        step.apply(client)
-        print(f"done: {step.describe()}", file=out)
-    _finish(plan, warnings, args, out)
+    """Apply the steps. `done` holds what was already done in this run (the document)."""
+    done = list(done)
+    print(f"Applying {len(plan.steps)} change{'' if len(plan.steps) == 1 else 's'}...", file=out)
+    for i, step in enumerate(plan.steps):
+        try:
+            step.apply(client)
+        except (GristError, InitError) as e:
+            raise PartialFailure(done, [s.describe() for s in plan.steps[i:]], e) from None
+        done.append(step.created())
+    _finish(plan, warnings, args, out, done, doc_id)
 
 
-def _finish(plan: Plan, warnings: Sequence[str], args: argparse.Namespace, out) -> None:
-    for w in warnings:
-        print(f"warning: {w}; next step: {next_step(args.allow_existing_tables)}", file=out)
+def _finish(
+    plan: Plan,
+    warnings: Sequence[str],
+    args: argparse.Namespace,
+    out,
+    done: Sequence[str] | None = None,
+    doc_id: str | None = None,
+) -> None:
+    """Print the closing summary (after a run that applied changes), warnings and next steps.
+
+    `done` is None when nothing was applied (dry run, declined, nothing to do)."""
+    if done is not None:
+        print("\nSummary", file=out)
+        print("  Done:" if done else "  Done: nothing", file=out)
+        for item in done:
+            print(f"    - {item}", file=out)
+        if plan.present:
+            print(f"  Already there: tables {', '.join(plan.present)}", file=out)
+    if warnings:
+        print("Needs attention:", file=out)
+        for w in warnings:
+            print(f"  - {w}. To fix: {next_step(args.allow_existing_tables)}", file=out)
     if plan.conflicts:
-        raise InitError("document differs from the contract; fix it in Grist")
+        raise InitError(
+            "The document differs from the contract in ways this script does not change "
+            "(listed above). Fix them in Grist, then re-run."
+        )
+    if done is not None:
+        print("\nNext steps", file=out)
+        if doc_id:
+            print(
+                "  - Add this line to your environment or .env (this script saved nothing):",
+                file=out,
+            )
+            print(f"      GRIST_DOC_ID={doc_id}", file=out)
+        print(
+            "  - Run bestyet-init --check to confirm the document matches the contract.", file=out
+        )
 
 
 def main(
@@ -821,6 +1011,7 @@ def main(
     transport: httpx.BaseTransport | None = None,
 ) -> int:
     args = parse_args(argv)
+    config = None
     try:
         config = Config.from_env(environ, require_doc_id=not args.create)
         run(args, config, sys.stdout, transport)
@@ -830,7 +1021,13 @@ def main(
     except KeyboardInterrupt:
         print("error: aborted", file=sys.stderr)
         return 130
-    except (ConfigError, InitError, GristError) as e:
+    except ConfigError as e:
+        print(f"error: {e}. See Configuration in the README.", file=sys.stderr)
+        return 1
+    except GristError as e:  # not caught and explained by run(), e.g. a failure while closing
+        print(f"error: {explain(e, config)}", file=sys.stderr)
+        return 1
+    except InitError as e:
         print(f"error: {e}", file=sys.stderr)
         return 1
     except Exception as e:  # noqa: BLE001 - no traceback (with request details) on the terminal

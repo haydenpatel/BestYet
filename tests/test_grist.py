@@ -1,4 +1,6 @@
 import json
+import socket
+import ssl
 import traceback
 
 import httpx
@@ -212,3 +214,36 @@ def test_repr_shows_only_scheme_host_port():
         transport=httpx.MockTransport(reply({})),
     )
     assert repr(client) == "GristClient(base_url='https://grist.example.test:8484', doc_id='DOC1')"
+
+
+def _connect_failure(cause):
+    def handler(request):
+        raise httpx.ConnectError("failed", request=request) from cause
+
+    return failing(make(handler)[0])
+
+
+@pytest.mark.parametrize(
+    ("cause", "kind"),
+    [
+        (socket.gaierror(8, "no such host"), "dns"),
+        (ConnectionRefusedError(61, "refused"), "refused"),
+        (ssl.SSLCertVerificationError("bad certificate"), "tls"),
+        (OSError("other"), "other"),
+    ],
+)
+def test_unreachable_cause_is_classified(cause, kind):
+    err = _connect_failure(cause)
+    assert (err.status, err.message, err.cause) == (0, "Could not reach Grist", kind)
+
+
+def test_timeout_redirect_and_bad_reply_causes():
+    def slow(request):
+        raise httpx.ConnectTimeout("slow", request=request)
+
+    assert failing(make(slow)[0]).cause == "timeout"
+    assert failing(make(lambda r: httpx.Response(301, headers={"location": "/x"}))[0]).cause == (
+        "redirect"
+    )
+    assert failing(make(lambda r: httpx.Response(200, text="<html>"))[0]).cause == "invalid_json"
+    assert failing(make(lambda r: httpx.Response(401, json={"error": "no"}))[0]).cause is None

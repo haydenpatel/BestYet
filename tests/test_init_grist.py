@@ -1,5 +1,7 @@
 import io
 import json
+import socket
+import ssl
 import sys
 
 import httpx
@@ -129,7 +131,7 @@ def test_seeding_twice_changes_nothing(capsys):
     capsys.readouterr()
     assert run(fake, "--seed-implements") == 0
     assert fake.writes == [] and json.dumps(fake.rows) == before
-    assert "nothing to do" in capsys.readouterr().out
+    assert "Nothing to do" in capsys.readouterr().out
 
 
 def test_existing_rows_are_kept_and_not_duplicated(capsys):
@@ -183,7 +185,7 @@ def test_conflicts_get_no_seed_steps(capsys):
     tables["events"] = tables.pop("Events")  # case-only table conflict
     fake = FakeGrist(tables)
     assert run(fake, "--seed-implements") == 1
-    assert "add example" not in capsys.readouterr().out
+    assert "example Events" not in capsys.readouterr().out
     assert fake.writes == []
 
 
@@ -214,7 +216,7 @@ def test_dry_run_lists_seed_steps_and_writes_nothing(capsys):
     fake.rows["Events"] = []
     assert run(fake, "--dry-run", "--seed-implements") == 0
     out = capsys.readouterr().out
-    assert "add example Events rows" in out and "add example Implements rows" in out
+    assert "example Events" in out and "example Implements" in out
     assert fake.writes == []
 
 
@@ -339,7 +341,7 @@ def test_second_run_is_a_noop(capsys):
     capsys.readouterr()
     assert run(fake) == 0
     assert fake.writes == []
-    assert "nothing to do" in capsys.readouterr().out
+    assert "Nothing to do" in capsys.readouterr().out
 
 
 def test_partial_doc_gets_only_missing_parts(capsys):
@@ -354,7 +356,7 @@ def test_partial_doc_gets_only_missing_parts(capsys):
     assert fake.tables["Athletes"]["Name"] == {"type": "Numeric"}
     posts = [w for w in fake.writes if w[0] == "POST"]
     assert len(posts) == 2
-    assert "left as is" in capsys.readouterr().out
+    assert "Left as is" in capsys.readouterr().out
 
 
 def test_unrelated_tables_refused_then_allowed(capsys):
@@ -381,7 +383,7 @@ def test_dry_run_changes_nothing(capsys):
     assert run(fake, "--dry-run", yes=False) == 0
     assert fake.writes == []
     out = capsys.readouterr().out
-    assert "create table Athletes" in out and "plan:" in out
+    assert "Create table Athletes" in out and "Plan:" in out
 
 
 def test_create_in_workspace_by_id(capsys):
@@ -401,7 +403,7 @@ def test_create_dry_run_creates_nothing(capsys):
     fake = FakeGrist()
     assert run(fake, "--create", "--workspace", "Work", "--dry-run", yes=False) == 0
     assert fake.created_docs == [] and fake.writes == []
-    assert "create document" in capsys.readouterr().out
+    assert "Create document" in capsys.readouterr().out
 
 
 def test_workspace_ambiguous_and_org_narrowing(capsys):
@@ -420,7 +422,7 @@ def test_workspace_missing_and_org_missing(capsys):
     assert run(fake, "--create", "--workspace", "Nope") == 1
     assert "not found" in capsys.readouterr().err
     assert run(fake, "--create", "--workspace", "Work", "--org", "Nope") == 1
-    assert "organisation" in capsys.readouterr().err
+    assert "Organisation" in capsys.readouterr().err
 
 
 def test_usage_errors_exit_nonzero(capsys):
@@ -439,7 +441,7 @@ def test_config_and_grist_failures_exit_nonzero(capsys):
     fake.fail_on = "/tables"
     assert run(fake) == 1
     err = capsys.readouterr().err
-    assert err.strip().startswith("error: Grist error 500: boom")
+    assert err.strip().startswith("error: Grist reported a server error (HTTP 500: boom)")
     assert err.count("\n") == 1
 
 
@@ -509,7 +511,7 @@ def test_case_only_column_conflict_warns_and_fails(capsys):
     assert run(fake) == 1
     captured = capsys.readouterr()
     assert "'name'" in captured.out and "'Name'" in captured.out
-    assert "fix it in Grist" in captured.err
+    assert "Fix them in Grist" in captured.err
     assert fake.writes == []
     assert set(fake.tables["Athletes"]) == {"name", "Grade"}
 
@@ -541,14 +543,17 @@ def test_failure_after_create_repeats_doc_id(capsys):
     assert run(fake, *CREATE, env=ENV_NO_DOC) == 1
     err = capsys.readouterr().err
     assert "GRIST_DOC_ID=NEWDOC" in err and "without --create" in err
-    assert err.count("\n") == 1
+    assert "Done before the failure:" in err and "Created document" in err
+    assert "Not done" in err and KEY not in err
 
 
 def test_failure_without_create_has_no_doc_hint(capsys):
     fake = FakeGrist()
     fake.fail_on = "POST"
     assert run(fake) == 1
-    assert "re-run" not in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "without --create" not in err and "GRIST_DOC_ID=" not in err
+    assert "Fix the cause, then re-run" in err and "Not done" in err
 
 
 def test_unrelated_tables_columns_not_read():
@@ -564,13 +569,13 @@ def test_create_then_rerun_is_a_noop(capsys):
     fake = FakeGrist()
     assert run(fake, *CREATE, env=ENV_NO_DOC) == 0
     out = capsys.readouterr().out
-    assert "document id: NEWDOC" in out and "warning" not in out
+    assert "GRIST_DOC_ID=NEWDOC" in out and "Needs attention" not in out
     assert "Table1" not in fake.tables and removals(fake) == [["RemoveTable", "Table1"]]
     assert set(fake.tables) == {t.id for t in schema.TABLES} | {schema.SUMMARY.id}
     fake.writes.clear()
     assert run(fake) == 0
     assert fake.writes == []
-    assert "nothing to do" in capsys.readouterr().out
+    assert "Nothing to do" in capsys.readouterr().out
 
 
 DEFAULTS = {c: {"type": "Any"} for c in "ABC"}
@@ -601,11 +606,11 @@ def test_default_table_kept_with_warning_when_a_condition_fails(
     out = capsys.readouterr().out
     assert "Table1" in fake.tables and removals(fake) == []
     assert "Athletes" in fake.tables
-    warning = f"warning: Table1 not removed: {reason}"
-    assert out.count(warning) == 2  # when found, and again in the summary
-    summary = next(line for line in out.splitlines() if "next step" in line)
-    assert summary.startswith(warning) and "--allow-existing-tables" in summary
-    assert "remove Table1 in Grist" in summary
+    warning = f"Table1 not removed: {reason}"
+    assert out.count(warning) == 1  # in the closing summary
+    line = next(line for line in out.splitlines() if warning in line)
+    assert "Needs attention" in out and "--allow-existing-tables" in line
+    assert "remove Table1 in Grist" in line
 
 
 @pytest.mark.parametrize(
@@ -643,7 +648,7 @@ def test_remove_table_failure_reports_id_and_hint(capsys):
     assert run(fake, *CREATE, env=ENV_NO_DOC) == 1
     err = capsys.readouterr().err
     assert "NEWDOC" in err and "GRIST_DOC_ID=NEWDOC" in err
-    assert "--allow-existing-tables" in err and err.count("\n") == 1
+    assert "--allow-existing-tables" in err and "Done before the failure" not in err
     assert "Table1" in fake.tables
 
 
@@ -651,8 +656,8 @@ def test_next_step_depends_on_the_allow_flag(capsys):
     fake = FakeGrist({"Table1": DEFAULTS})
     assert run(fake, "--allow-existing-tables") == 0
     out = capsys.readouterr().out
-    summary = next(line for line in out.splitlines() if "next step" in line)
-    assert "next step: remove Table1 in Grist" in summary
+    summary = next(line for line in out.splitlines() if "To fix:" in line)
+    assert "To fix: remove Table1 in Grist" in summary
     assert "--allow-existing-tables" not in summary
     fake = FakeGrist(new_doc_tables={"Table1": DEFAULTS, "Notes": {}})
     assert run(fake, *CREATE, env=ENV_NO_DOC) == 0
@@ -697,7 +702,7 @@ def test_interrupt_during_apply(capsys):
 def test_eof_at_the_prompt_ends_the_line(monkeypatch, capsys):
     monkeypatch.setattr(sys, "stdin", Stdin(""))
     assert run(FakeGrist(), yes=False) == 0
-    assert "[y/N] \nnot applied" in capsys.readouterr().out
+    assert "[y/N] \nNot applied" in capsys.readouterr().out
 
 
 def test_dry_run_wins_over_yes(monkeypatch, capsys):
@@ -706,7 +711,7 @@ def test_dry_run_wins_over_yes(monkeypatch, capsys):
     assert run(fake, "--yes", "--dry-run", yes=False) == 0
     assert run(fake, *CREATE, "-y", "--dry-run", env=ENV_NO_DOC, yes=False) == 0
     out = capsys.readouterr().out
-    assert "plan:" in out and "Apply these changes" not in out and "done:" not in out
+    assert "Plan:" in out and "Apply these changes" not in out and "done:" not in out
     assert fake.writes == [] and fake.created_docs == []
 
 
@@ -715,8 +720,8 @@ def test_existing_document_keeps_default_table_and_warns(capsys):
     assert run(fake, "--allow-existing-tables") == 0
     out = capsys.readouterr().out
     assert "Table1" in fake.tables and removals(fake) == []
-    warning = "warning: Table1 not removed: the document was not created by this run"
-    assert out.count(warning) == 2 and "next step" in out
+    warning = "Table1 not removed: the document was not created by this run"
+    assert out.count(warning) == 1 and "Needs attention" in out and "To fix:" in out
 
 
 def test_refusal_hints_at_default_table_and_create(capsys):
@@ -735,18 +740,18 @@ def test_plan_is_printed_before_the_first_write(capsys):
     seen = spy_first_write(fake, capsys)
     assert run(fake, *CREATE, env=ENV_NO_DOC) == 0
     before = seen[0]
-    assert "plan:" in before
-    assert "create document 'BestYet' in workspace 10" in before
-    assert "remove it" in before and "Table1" in before
-    assert all(f"create table {t.id}" in before for t in schema.TABLES)
-    assert "done:" not in before and "document id" not in before
+    assert "Plan:" in before
+    assert "Create document 'BestYet' in workspace 10" in before
+    assert "remove Grist's default table Table1" in before
+    assert all(f"Create table {t.id}" in before for t in schema.TABLES)
+    assert "Summary" not in before and "Created document" not in before
 
     capsys.readouterr()
     fake = FakeGrist()
     seen = spy_first_write(fake, capsys)
     assert run(fake) == 0
-    assert "plan:" in seen[0] and "create table Athletes" in seen[0] and "done:" not in seen[0]
-    assert "done: create table Athletes" in capsys.readouterr().out
+    assert "Plan:" in seen[0] and "Create table Athletes" in seen[0] and "Summary" not in seen[0]
+    assert "Created table Athletes" in capsys.readouterr().out
 
 
 @pytest.mark.parametrize(
@@ -783,7 +788,7 @@ def test_non_tty_without_yes_refuses(monkeypatch, capsys):
     captured = capsys.readouterr()
     assert "pass --yes to run non-interactively" in captured.err
     assert captured.err.count("\n") == 1 and "Apply these changes" not in captured.out
-    assert "plan:" in captured.out
+    assert "Plan:" in captured.out
     assert fake.created_docs == [] and fake.writes == []
 
 
@@ -804,13 +809,13 @@ def test_dry_run_and_nothing_to_do_never_prompt(monkeypatch, capsys):
     fake = FakeGrist()
     assert run(fake, "--dry-run", yes=False) == 0
     out = capsys.readouterr().out
-    assert "plan:" in out and "Apply these changes" not in out and fake.writes == []
+    assert "Plan:" in out and "Apply these changes" not in out and fake.writes == []
     assert run(fake, *CREATE, "--dry-run", env=ENV_NO_DOC, yes=False) == 0
     assert "Table1" in capsys.readouterr().out
     assert fake.created_docs == [] and fake.writes == []
     done = full_fake()
     assert run(done, yes=False) == 0
-    assert "nothing to do" in capsys.readouterr().out
+    assert "Nothing to do" in capsys.readouterr().out
 
 
 def test_failed_page_rename_names_the_stray_page(capsys):
@@ -893,7 +898,7 @@ def test_demo_data_on_fresh_doc(capsys):
     assert len(fake.rows["Implements"]) == len(schema.EXAMPLE_IMPLEMENTS)  # seeded as needed
     assert len(fake.rows["Events"]) == len(schema.EXAMPLE_EVENTS)
     out = capsys.readouterr().out
-    assert out.index("add example Events") < out.index("add demo data")
+    assert out.index("Add the example Events") < out.index("Add demo data")
 
 
 def test_demo_results_leave_computed_columns_to_grist():
@@ -951,7 +956,7 @@ def test_demo_data_twice_refuses_second_time(capsys):
 def test_demo_data_dry_run_and_prompt_write_nothing(monkeypatch, capsys):
     fake = full_fake()
     assert run(fake, "--demo-data", "--dry-run") == 0
-    assert "add demo data" in capsys.readouterr().out and fake.writes == []
+    assert "Add demo data" in capsys.readouterr().out and fake.writes == []
     monkeypatch.setattr(sys, "stdin", Stdin("n\n"))
     assert run(fake, "--demo-data", yes=False) == 0
     assert fake.writes == []
@@ -988,3 +993,166 @@ def test_demo_data_gets_no_step_on_conflict(capsys):
     assert run(fake, "--demo-data") == 1
     assert "demo data" not in capsys.readouterr().out
     assert fake.writes == []
+
+
+# Error messages and the closing summary.
+
+
+def failing_transport(handler):
+    return httpx.MockTransport(handler)
+
+
+def reply(status, error="denied"):
+    return failing_transport(lambda request: httpx.Response(status, json={"error": error}))
+
+
+def refuse(cause):
+    def handler(request):
+        raise httpx.ConnectError("failed", request=request) from cause
+
+    return failing_transport(handler)
+
+
+@pytest.mark.parametrize(
+    ("cause", "text"),
+    [
+        (socket.gaierror(8, "no such host"), "could not be resolved (DNS)"),
+        (ConnectionRefusedError(61, "refused"), "connection was refused"),
+        (ssl.SSLCertVerificationError("bad certificate"), "TLS or certificate problem"),
+        (OSError("x"), "the connection failed"),
+    ],
+)
+def test_unreachable_names_the_host_and_the_cause(capsys, cause, text):
+    userinfo = "bob:" + "hunter2"  # built in parts: a literal user:pass URL trips secret scanners
+    env = {**ENV, "GRIST_URL": f"https://{userinfo}@grist.example.test:8484/sub"}
+    assert main([], env, refuse(cause)) == 1
+    err = capsys.readouterr().err
+    assert err.startswith("error: Could not reach Grist at grist.example.test:8484: ")
+    assert text in err and "Check GRIST_URL" in err
+    for secret in (KEY, "hunter2", "bob", "/sub", "https://"):
+        assert secret not in err
+    assert err.count("\n") == 1
+
+
+def test_timeout_message(capsys):
+    def handler(request):
+        raise httpx.ReadTimeout("slow", request=request)
+
+    assert main(["--check"], ENV, failing_transport(handler)) == 1
+    assert "at grist.example.test: the connection timed out" in capsys.readouterr().err
+
+
+def test_unauthorised_says_to_check_the_key(capsys):
+    assert main(["--check"], ENV, reply(401, "Unauthorized")) == 1
+    err = capsys.readouterr().err
+    assert "rejected the API key (HTTP 401)" in err and "GRIST_API_KEY" in err
+    assert KEY not in err and err.count("\n") == 1
+
+
+def test_forbidden_says_what_to_check(capsys):
+    assert main(["--check"], ENV, reply(403)) == 1
+    assert "can access the document" in capsys.readouterr().err
+    assert main([*CREATE, "--yes"], ENV_NO_DOC, reply(403)) == 1
+    assert "can access the workspace" in capsys.readouterr().err
+
+
+def test_unknown_document(capsys):
+    assert main(["--yes"], ENV, reply(404, "not found")) == 1
+    err = capsys.readouterr().err
+    assert "could not find the document (HTTP 404)" in err and "GRIST_DOC_ID" in err
+    assert DOC not in err
+
+
+def test_unknown_workspace_by_name_and_by_id(capsys):
+    fake = FakeGrist()
+    assert run(fake, "--create", "--workspace", "Nope", "--dry-run", env=ENV_NO_DOC) == 1
+    err = capsys.readouterr().err
+    assert "Workspace 'Nope' not found" in err and "--workspace" in err
+    assert fake.writes == []
+    assert main(["--create", "--workspace", "99", "--yes"], ENV_NO_DOC, reply(404)) == 1
+    assert "could not find that workspace (HTTP 404)" in capsys.readouterr().err
+
+
+def test_not_a_grist_server(capsys):
+    transport = failing_transport(lambda request: httpx.Response(200, text="<html>"))
+    assert main(["--check"], ENV, transport) == 1
+    assert "Check that GRIST_URL is the address of a Grist server" in capsys.readouterr().err
+
+
+def test_partial_failure_lists_done_and_not_done_for_an_existing_document(capsys):
+    fake = full_fake()
+    del fake.tables["Meets"]
+    fake.fail_on = "POST /api/docs/DOC_ID_HERE/tables/Results/columns"
+    del fake.tables["Results"]["Mark"]
+    assert run(fake) == 1
+    captured = capsys.readouterr()
+    err = captured.err
+    assert err.startswith("error: Grist reported a server error (HTTP 500: boom)")
+    assert "The run stopped part-way." in err
+    assert "Done before the failure:\n  - Created table Meets" in err
+    assert "Not done (the first step failed):\n  - Add missing columns to Results: Mark" in err
+    assert err.rstrip().endswith("re-run: it only adds what is missing.")
+    assert "Summary" not in captured.out and KEY not in err + captured.out
+
+
+def test_partial_failure_with_nothing_done(capsys):
+    fake = full_fake()
+    del fake.tables["Meets"]
+    fake.fail_on = "POST"
+    assert run(fake) == 1
+    assert "Done before the failure: nothing" in capsys.readouterr().err
+
+
+def test_partial_failure_after_create_names_the_document(capsys):
+    fake = FakeGrist()
+    fake.fail_on = "POST /api/docs/NEWDOC/tables"
+    assert run(fake, *CREATE, env=ENV_NO_DOC) == 1
+    captured = capsys.readouterr()
+    assert "Created document 'BestYet' (id NEWDOC)." in captured.out  # printed straight away
+    assert "Done before the failure:\n  - Created document 'BestYet' (id NEWDOC)" in captured.err
+    assert "Removed Grist's empty default table Table1" in captured.err
+    assert "re-run without --create and with GRIST_DOC_ID=NEWDOC" in captured.err
+
+
+def test_create_prints_the_closing_summary(capsys):
+    fake = FakeGrist()
+    assert run(fake, *CREATE, "--name", "My Doc", env=ENV_NO_DOC) == 0
+    captured = capsys.readouterr()
+    out = captured.out
+    assert captured.err == "" and KEY not in out
+    summary = out[out.index("\nSummary") :]
+    assert "Created document 'My Doc' (id NEWDOC)" in summary
+    assert "Removed Grist's empty default table Table1" in summary
+    assert "Created table Athletes" in summary and "Created the 'Personal bests' page" in summary
+    assert "Already there" not in summary and "Needs attention" not in summary
+    assert "\n      GRIST_DOC_ID=NEWDOC\n" in summary  # on a line of its own
+    assert "saved nothing" in summary and "bestyet-init --check" in summary
+
+
+def test_rerun_summary_lists_what_was_added_and_what_was_there(capsys):
+    fake = full_fake()
+    del fake.tables["Meets"]
+    assert run(fake) == 0
+    out = capsys.readouterr().out
+    summary = out[out.index("\nSummary") :]
+    assert "Created table Meets" in summary and "Already there: tables Athletes" in summary
+    assert "Meets," not in summary.split("Already there")[1]
+    assert "GRIST_DOC_ID" not in summary and "bestyet-init --check" in summary
+
+
+def test_normal_output_has_no_internal_notes(capsys):
+    for argv, fake in (
+        ([], FakeGrist()),
+        (["--dry-run"], full_fake()),
+        (["--demo-data"], FakeGrist()),
+    ):
+        assert run(fake, *argv) == 0
+        out = capsys.readouterr().out
+        for internal in (" yet", "TODO", "not handled", "not implemented", "colRef", "recalc"):
+            assert internal not in out
+
+
+def test_no_op_points_at_check(capsys):
+    assert run(full_fake()) == 0
+    out = capsys.readouterr().out
+    assert out.startswith("Nothing to do") and "bestyet-init --check" in out

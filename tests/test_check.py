@@ -160,7 +160,7 @@ def test_check_only_reads():
 def test_cli_check_passes(capsys):
     fake = initialised()
     assert main(["--check"], ENV, fake.transport) == 0
-    assert "matches the contract" in capsys.readouterr().out
+    assert "matches the BestYet contract: no differences" in capsys.readouterr().out
 
 
 def test_cli_check_lists_every_difference_and_fails(capsys):
@@ -172,6 +172,8 @@ def test_cli_check_lists_every_difference_and_fails(capsys):
     assert main(["--check"], ENV, fake.transport) == 1
     captured = capsys.readouterr()
     assert "3 differences" in captured.out
+    assert "Running bestyet-init without --check adds what is missing" in captured.out
+    assert "the document has 3 differences from the contract" in captured.err
     assert "Results: column 'Mark' is missing" in captured.out
     assert f"table {schema.SUMMARY.id!r} is missing" in captured.out
     assert f"page {schema.SUMMARY.page!r} is missing" in captured.out
