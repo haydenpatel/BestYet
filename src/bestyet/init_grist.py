@@ -42,7 +42,7 @@ from urllib.parse import urlsplit
 import httpx
 
 from bestyet import dates, schema
-from bestyet.check import check_document, format_differences, page_names, page_present
+from bestyet.check import check_document, format_differences, page_names
 from bestyet.config import Config, ConfigError
 from bestyet.grist import GristClient, GristError
 
@@ -756,7 +756,7 @@ def _plan_summary(
     if exists is not None and (exists != s.id or exists not in summary_tables):
         plan.conflicts.append(f"table {exists!r} exists but is not the summary table {s.id!r}")
         return
-    page_exists = page_present(pages, s.page)
+    page_exists = s.page in pages
     if page_exists and exists is None:
         plan.conflicts.append(
             f"page {s.page!r} exists but summary table {s.id!r} does not; "
@@ -782,7 +782,7 @@ def _plan_summary(
 
 # Plan and summary text: what the user cares about, grouped, not one line per internal step.
 
-GROUPS = ("Tables", "Calculated columns", "Personal Bests", "Display", "Pre-loaded data", "Other")
+GROUPS = ("Tables", "Calculated columns", "Personal bests", "Display", "Pre-loaded data", "Other")
 
 
 def grouped(
@@ -803,7 +803,7 @@ def grouped(
         if isinstance(s, AddColumns) and s.table == schema.SUMMARY.id:
             if not page_made:
                 verb = "Added" if past else "Add"
-                out["Personal Bests"].append(
+                out["Personal bests"].append(
                     f"{verb} the missing column to the summary table: {s._names()}"
                 )
         elif isinstance(s, AddColumns) and s.columns[0].formula is None:
@@ -822,7 +822,7 @@ def grouped(
             out["Calculated columns"].append(f"{s.table}: {', '.join(parts)}")
         elif isinstance(s, CreateSummaryPage):
             verb = "Created" if past else "Create"
-            out["Personal Bests"].append(
+            out["Personal bests"].append(
                 f"{verb} a {s.summary.page!r} page showing each athlete's best per event"
             )
         elif isinstance(s, SetVisibleCols) and not hidden:
@@ -1630,7 +1630,7 @@ def _new_document_groups(plan: Plan, new_doc: tuple[str, str]) -> list[tuple[str
     pages = [s.summary.page for s in plan.steps if isinstance(s, CreateSummaryPage)]
     lines = [f"Tables: {', '.join(tables)}"] if tables else []
     lines += [f"A {p!r} page showing each athlete's best per event" for p in pages]
-    rest = [(h, ls) for h, ls in grouped(plan.steps) if h not in ("Tables", "Personal Bests")]
+    rest = [(h, ls) for h, ls in grouped(plan.steps) if h not in ("Tables", "Personal bests")]
     return [(f"New document {name!r} in {label}", lines), *rest]
 
 

@@ -66,14 +66,6 @@ def _column_differences(
             out.append(f"{name} should show {column.ref_table}.{column.visible_col}")
 
 
-def page_present(pages: Collection[str], name: str) -> bool:
-    """Is a page with this name there? Page names match ignoring case and surrounding spaces
-    (a page named `Personal bests` counts as `Personal Bests`: an existing page is never
-    renamed or duplicated)."""
-    wanted = name.strip().casefold()
-    return any(p.strip().casefold() == wanted for p in pages)
-
-
 def find_differences(
     tables: list[Mapping],
     columns: Mapping[str, Mapping[str, Mapping]],
@@ -140,7 +132,7 @@ def find_differences(
                 _column_differences(s.id, schema.Column(name, "Int"), cols[name], refs, "Int", out)
             else:
                 _column_differences(s.id, column, cols[name], refs, column.type, out)
-    if not page_present(pages, s.page):
+    if s.page not in pages:
         out.append(f"page {s.page!r} is missing")
     return out
 

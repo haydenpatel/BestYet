@@ -280,7 +280,7 @@ def test_summary_table_is_created_through_a_page_and_has_best():
     fake = FakeGrist()
     run(fake)
     assert fake.summary_tables == {schema.SUMMARY.id}
-    assert list(fake.views.values()) == ["Personal Bests"]
+    assert list(fake.views.values()) == ["Personal bests"]
     [create] = [a for a in fake.actions if a[0] == "CreateViewSection"]
     group = [fake.refs[("Results", g)] for g in schema.SUMMARY.group_by]
     assert create[1] == fake.refs[("Results", "")] and create[2] == 0 and create[4] == group
@@ -329,7 +329,7 @@ def test_missing_page_is_created_for_an_existing_summary_table():
     fake = full_fake()
     fake.views.clear()
     assert run(fake) == 0
-    assert list(fake.views.values()) == ["Personal Bests"]
+    assert list(fake.views.values()) == ["Personal bests"]
     assert len([a for a in fake.actions if a[0] == "CreateViewSection"]) == 1
 
 
@@ -856,7 +856,7 @@ def test_failed_page_rename_names_the_stray_page(capsys):
     fake.transport = httpx.MockTransport(handle)
     assert run(fake) == 1
     err = capsys.readouterr().err
-    assert "was created but not named 'Personal Bests'" in err and "view 1" in err
+    assert "was created but not named 'Personal bests'" in err and "view 1" in err
     assert KEY not in err
 
 
@@ -1154,7 +1154,7 @@ def test_create_ends_with_a_short_done_message_and_next_steps(capsys):
     assert captured.err == "" and KEY not in out and "Summary" not in out
     done = out[out.index("Done. Created") :]
     assert (
-        "Done. Created 'My Doc' in workspace 'Work' with 5 tables, the 'Personal Bests' page"
+        "Done. Created 'My Doc' in workspace 'Work' with 5 tables, the 'Personal bests' page"
         in done
     )
     assert "and pre-loaded data." in done and "Needs attention" not in done
@@ -1217,8 +1217,8 @@ def _fail_trigger_update(fake):
     [
         (
             _fail_page_rename,
-            "was created but not named 'Personal Bests'",
-            "Create a 'Personal Bests' page",
+            "was created but not named 'Personal bests'",
+            "Create a 'Personal bests' page",
         ),
         (
             _fail_trigger_update,
@@ -1262,7 +1262,7 @@ def test_failed_step_is_separated_from_the_steps_not_done(capsys):
         in err
     )
     assert "(failed; may be partly applied)" in err
-    assert "Personal Bests\n    - Create a 'Personal Bests' page" in err  # not started: unlabelled
+    assert "Personal bests\n    - Create a 'Personal bests' page" in err  # not started: unlabelled
 
 
 def test_plan_is_grouped_in_plain_words(capsys):
@@ -1276,7 +1276,7 @@ def test_plan_is_grouped_in_plain_words(capsys):
     ]
     assert headings == ["New document 'BestYet' in workspace 'Work'", "Pre-loaded data"]
     assert "    - Tables: Athletes, Events, Meets, Implements, Results\n" in out
-    assert "    - A 'Personal Bests' page showing each athlete's best per event\n" in out
+    assert "    - A 'Personal bests' page showing each athlete's best per event\n" in out
     assert "Create 'BestYet'" not in out
     assert "showing each athlete's best per event" in out
     assert "Add demo data: 3 athletes, 2 meets, 7 results\n" in out
@@ -1927,7 +1927,7 @@ def test_all_no_leaves_the_tables_empty_and_hints_to_add_events(monkeypatch, cap
     assert "Add the example implements (a starting list you can edit in Grist)?\n" in out
     assert QUALIFIER in out  # events no and missing: the qualifier line follows
     assert "Pre-loaded data" not in out and "pre-loaded data" not in out
-    assert "with 5 tables and the 'Personal Bests' page." in out
+    assert "with 5 tables and the 'Personal bests' page." in out
     assert not fake.rows.get("Events") and not fake.rows.get("Implements")
     assert "add your events by hand in the events table in grist" in out.lower()
     assert "Kind: Time or Distance" in out and "cannot record results" in out
@@ -2118,30 +2118,3 @@ def test_an_existing_document_keeps_the_separate_plan_groups(capsys):
     del fake.tables["Results"]["Mark"]
     assert run(fake, "--dry-run") == 0
     assert "  Tables\n    - Add missing columns to Results: Mark\n" in capsys.readouterr().out
-
-
-# The page is named "Personal Bests"; an existing page matches ignoring case and spaces.
-
-
-@pytest.mark.parametrize("old_name", ["Personal bests", "  PERSONAL BESTS "])
-def test_an_existing_page_with_another_case_counts_and_is_left_alone(capsys, old_name):
-    fake = full_fake()
-    fake.views = {1: old_name}
-    assert run(fake) == 0
-    assert "Nothing to do" in capsys.readouterr().out
-    assert fake.views == {1: old_name} and fake.writes == []  # not renamed, not duplicated
-
-
-def test_without_the_page_it_is_created_as_personal_bests_with_capital_b(capsys):
-    fake = full_fake()
-    fake.views = {}
-    assert run(fake) == 0
-    assert list(fake.views.values()) == ["Personal Bests"]
-    assert "Done. Added the 'Personal Bests' page." in capsys.readouterr().out
-
-
-def test_page_present_matches_ignoring_case_and_spaces():
-    from bestyet.check import page_present
-
-    assert page_present(["Home", " personal BESTS"], "Personal Bests")
-    assert not page_present(["Home", "Personal"], "Personal Bests")
