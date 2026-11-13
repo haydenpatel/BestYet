@@ -13,8 +13,9 @@ the contract (``bestyet.check``, also run by the app at startup) and exits non-z
 Seed rows are opt-in plan steps (a fresh document ends up with empty Events and Implements
 tables unless asked): the default Events with ``--seed-events``, the example Implements with
 ``--seed-implements`` (which also adds only the events their rows use). ``--demo-data`` adds
-fictional athletes, meets and results as the last step; it plans the Implements and only the events it needs, and refuses (writing nothing) unless
-Athletes, Meets and Results are all empty.
+fictional athletes, meets and results as the last step; it plans the Implements and only the
+events it needs, and refuses (writing nothing) unless Athletes, Meets and Results are all
+empty.
 
 The Events and Implements seeds only add rows that are missing (Events matched by Name,
 Implements by Event and Grade, ignoring case and surrounding spaces); an existing row is never
@@ -742,9 +743,9 @@ def _plan_seeds(
                 demo,
             )
         )
-    # Events added above are new, so they cannot have Implements yet: those count as missing.
+    # An Implements row of an Event that is not in the document yet counts as missing too.
     missing_implements = _missing_implements(events, implements)
-    if implements_too and (missing_events or missing_implements):
+    if implements_too and missing_implements:
         total = len(schema.EXAMPLE_IMPLEMENTS)
         plan.steps.append(SeedImplements(len(missing_implements), total - len(missing_implements)))
 
@@ -955,14 +956,29 @@ def existing_docs(client: GristClient, workspace_id: int) -> list[dict]:
     return list(client.workspace(workspace_id).get("docs", []))
 
 
-def name_clash(client: GristClient, workspace_id: int, name: str) -> dict | None:
+def name_clash(
+    client: GristClient, workspace_id: int, name: str, docs: Sequence[dict] | None = None
+) -> dict | None:
     """The document in the workspace that has this name (ignoring case and surrounding
-    spaces), if any."""
+    spaces), if any. `docs`: a listing already read (None: read it now)."""
     wanted = name.strip().casefold()
-    return next(
-        (d for d in existing_docs(client, workspace_id) if d["name"].strip().casefold() == wanted),
-        None,
-    )
+    if docs is None:
+        docs = existing_docs(client, workspace_id)
+    return next((d for d in docs if d["name"].strip().casefold() == wanted), None)
+
+
+def _workspace(admin: GristClient, args: argparse.Namespace) -> tuple[int, str]:
+    """The workspace's (id, label), looked up once per run."""
+    if args.ws_resolved is None:
+        args.ws_resolved = resolve_workspace_label(admin, args.workspace, args.org)
+    return args.ws_resolved
+
+
+def _workspace_docs(admin: GristClient, args: argparse.Namespace) -> list[dict]:
+    """The workspace's documents, listed once per run (a final re-check lists again)."""
+    if args.ws_docs is None:
+        args.ws_docs = existing_docs(admin, _workspace(admin, args)[0])
+    return args.ws_docs
 
 
 # Workspace lookup.
@@ -1052,9 +1068,15 @@ def parse_args(argv: Sequence[str] | None, can_ask: bool = False) -> argparse.Na
             "refused unless Athletes, Meets and Results are all empty"
         ),
     )
-    p.set_defaults(
-        doc_id=None, old_doc_id="", settings_id=None, events_hint=False
-    )  # set by run, not by flags
+    p.set_defaults(  # set by main, run and the questions, not by flags
+        guided=False,
+        doc_id=None,
+        old_doc_id="",
+        settings_id=None,
+        events_hint=False,
+        ws_resolved=None,
+        ws_docs=None,
+    )
     args = p.parse_args(argv)
     if args.check:
         used = [
@@ -1063,6 +1085,7 @@ def parse_args(argv: Sequence[str] | None, can_ask: bool = False) -> argparse.Na
                 ("--create", args.create),
                 ("--workspace", args.workspace),
                 ("--org", args.org),
+                ("--name", args.name),
                 ("--dry-run", args.dry_run),
                 ("--seed-events", args.seed_events),
                 ("--seed-implements", args.seed_implements),
@@ -1133,7 +1156,7 @@ def next_steps_after_create(
         "Fix the cause shown under Error, if you can."
         if rerun_safe
         else "Fix the problem described under Error in Grist.",
-        settings_item(doc_id, old_doc_id),
+        "{}: {}".format(*settings_step(doc_id, old_doc_id)[:2]),
         "Then run bestyet-init again (without --create)"
         + ("; it only adds what is missing." if rerun_safe else "."),
     ]
@@ -1221,32 +1244,26 @@ def _ask_yes_no(out, question: str, stdin, default: bool = False) -> bool:
         print("Please answer y or n.", file=out)
 
 
-def _ask_choice(out, question: str, options: Sequence[str], stdin) -> int:
-    """Numbered list; returns the 0-based index of the chosen option."""
+def _ask_choice(
+    out, question: str, options: Sequence[str], stdin, create_option: bool = False
+) -> int | None:
+    """Numbered list; returns the 0-based index of the chosen option. With `create_option`
+    the answer C (create a new document) is accepted too and returned as None."""
     print(question, file=out)
     for i, option in enumerate(options, 1):
         print(f"  {i}. {option}", file=out)
+    prompt = f"Enter a number (1-{len(options)})"
+    prompt += ", or C to create a new document: " if create_option else ": "
     while True:
-        answer = _ask(out, f"Enter a number (1-{len(options)}): ", stdin)
-        if answer.isascii() and answer.isdigit() and 1 <= int(answer) <= len(options):
-            return int(answer) - 1
-        print(f"Please enter a number from 1 to {len(options)}.", file=out)
-
-
-def _ask_existing(out, question: str, options: Sequence[str], stdin) -> int | None:
-    """Numbered existing documents, or C to create a new one. Returns the 0-based index of
-    the chosen document, or None to create a new one."""
-    print(question, file=out)
-    for i, option in enumerate(options, 1):
-        print(f"  {i}. {option}", file=out)
-    while True:
-        prompt = f"Enter a number (1-{len(options)}), or C to create a new document: "
         answer = _ask(out, prompt, stdin)
-        if answer.lower() in ("c", "create"):
+        if create_option and answer.lower() in ("c", "create"):
             return None
         if answer.isascii() and answer.isdigit() and 1 <= int(answer) <= len(options):
             return int(answer) - 1
-        print(f"Please enter a number from 1 to {len(options)}, or C.", file=out)
+        print(
+            f"Please enter a number from 1 to {len(options)}{', or C' if create_option else ''}.",
+            file=out,
+        )
 
 
 def _choose_workspace(client: GristClient, org: str | None, out, stdin) -> str | None:
@@ -1287,11 +1304,20 @@ def guide(args: argparse.Namespace, config: Config, client_for, out, stdin) -> b
     doc_id = None
     create = args.create
     if config.grist_doc_id and not create and not args.workspace and not args.org:
-        with _explaining(config, "document"), client_for(config.grist_doc_id) as client:
-            name = client.document().get("name", "")
-        question = f"GRIST_DOC_ID is set to the document {name!r}. Set up that document?"
-        if _ask_yes_no(out, question, stdin, default=True):
-            doc_id = config.grist_doc_id
+        name = None
+        try:
+            with client_for(config.grist_doc_id) as client:
+                name = client.document().get("name", "")
+        except GristError as e:  # a stale or unreadable id must not stop the questions
+            print(
+                f"GRIST_DOC_ID is set but that document cannot be read. "
+                f"{explain(e, config, 'document')} Choose another document below.\n",
+                file=out,
+            )
+        if name is not None:
+            question = f"GRIST_DOC_ID is set to the document {name!r}. Set up that document?"
+            if _ask_yes_no(out, question, stdin, default=True):
+                doc_id = config.grist_doc_id
     if doc_id is None:
         with _explaining(config, "workspace"), client_for("") as admin:
             if not args.workspace:
@@ -1303,17 +1329,18 @@ def guide(args: argparse.Namespace, config: Config, client_for, out, stdin) -> b
                         file=out,
                     )
                     return False
-            ws_id, label = resolve_workspace_label(admin, args.workspace, args.org)
+            ws_id, label = _workspace(admin, args)
             if not create:  # which document: one that is already there, or a new one
-                docs = existing_docs(admin, ws_id)
+                docs = _workspace_docs(admin, args)
                 if not docs:
                     create = True
                 else:
-                    pick = _ask_existing(
+                    pick = _ask_choice(
                         out,
                         f"Do you want to use an existing document in {label}?",
                         [d["name"] for d in docs],
                         stdin,
+                        create_option=True,
                     )
                     create = pick is None
                     if pick is not None:
@@ -1323,7 +1350,7 @@ def guide(args: argparse.Namespace, config: Config, client_for, out, stdin) -> b
                     given = bool(args.name)
                     name = args.name or _ask(out, "Name for the new document [BestYet]: ", stdin)
                     args.name = name or "BestYet"
-                    clash = name_clash(admin, ws_id, args.name)
+                    clash = name_clash(admin, ws_id, args.name, _workspace_docs(admin, args))
                     if not clash:
                         break
                     question = (
@@ -1358,6 +1385,8 @@ def guide(args: argparse.Namespace, config: Config, client_for, out, stdin) -> b
             demo_allowed = not _non_empty(client, contract_table_ids(tables))
             if any(t["id"] == "Events" for t in tables):
                 present_events = {_norm(n) for n in _event_names(client.records("Events")).values()}
+    if args.yes or args.dry_run:  # only a required value was missing: flag defaults apply
+        return True
     if demo_allowed and not args.demo_data:
         args.demo_data = _ask_yes_no(
             out,
@@ -1391,34 +1420,18 @@ def _settings_id(config: Config, args: argparse.Namespace) -> str | None:
     return config.grist_doc_id if config.grist_doc_id != args.old_doc_id else None
 
 
-def settings_lines(doc_id: str, old_doc_id: str) -> list[str]:
-    """The settings step of the closing next steps (text for item 1)."""
+def settings_step(doc_id: str, old_doc_id: str) -> tuple[str, str, str | None]:
+    """The settings step of the next steps, in one place: (instruction, the line to put in
+    the settings, a closing note or None). Callers join them as they need."""
+    assignment = f"GRIST_DOC_ID={doc_id}"
     if old_doc_id:
-        return [
-            (
-                "Update GRIST_DOC_ID in your settings (environment or .env), which currently "
-                "points at a different document (this script does not change your settings):"
-            ),
-            f"     GRIST_DOC_ID={doc_id}",
-            "     Until you do, bestyet-init and the app keep using that other document.",
-        ]
-    return [
-        (
-            "Add this line to your settings (environment or .env); this script does not change "
-            "your settings:"
-        ),
-        f"     GRIST_DOC_ID={doc_id}",
-    ]
-
-
-def settings_item(doc_id: str, old_doc_id: str) -> str:
-    """The same step as one line, for a failure's next steps."""
-    if old_doc_id:
-        return (
-            "Update GRIST_DOC_ID in your settings (environment or .env), which currently points "
-            f"at a different document: GRIST_DOC_ID={doc_id}"
+        update = (
+            "Update GRIST_DOC_ID in your settings (environment or .env), which currently "
+            "points at a different document"
         )
-    return f"Add this line to your settings (environment or .env): GRIST_DOC_ID={doc_id}"
+        note = "Until you do, bestyet-init and the app keep using that other document."
+        return update, assignment, note
+    return "Add this line to your settings (environment or .env)", assignment, None
 
 
 EVENTS_HINT = (
@@ -1439,11 +1452,12 @@ def print_next_steps(
     numbered = bool(doc_id) + events_hint + check > 1
     n = 0
     if doc_id:
-        first, *rest = settings_lines(doc_id, old_doc_id)
+        instruction, assignment, note = settings_step(doc_id, old_doc_id)
         n += 1
-        print(f"  {n}. {first}", file=out)
-        for line in rest:
-            print(line, file=out)
+        print(f"  {n}. {instruction}; this script does not change your settings:", file=out)
+        print(f"     {assignment}", file=out)
+        if note:
+            print(f"     {note}", file=out)
     if events_hint:
         n += 1
         print(f"  {n}. {EVENTS_HINT}" if numbered else f"  - {EVENTS_HINT}", file=out)
@@ -1499,10 +1513,10 @@ def run(
         return
 
     with _explaining(config, "workspace"), client_for("") as admin:
-        workspace_id, workspace_label = resolve_workspace_label(admin, args.workspace, args.org)
+        workspace_id, workspace_label = _workspace(admin, args)
     new_doc = (args.name, workspace_label)
     with _explaining(config, "workspace"), client_for("") as admin:
-        clash = name_clash(admin, workspace_id, args.name)
+        clash = name_clash(admin, workspace_id, args.name, _workspace_docs(admin, args))
     if clash:
         taken = f"A document named {clash['name']!r} already exists in {workspace_label}."
         if args.yes or not _tty(sys.stdin):  # never switch to an existing document unseen
@@ -1618,7 +1632,7 @@ def _set_up_existing(client: GristClient, config: Config, args: argparse.Namespa
         if not e.rerun_safe:
             steps = ["Fix the problem described under Error in Grist."]
         if args.settings_id:
-            steps.append(settings_item(args.settings_id, args.old_doc_id))
+            steps.append("{}: {}".format(*settings_step(args.settings_id, args.old_doc_id)[:2]))
         if e.rerun_safe:
             steps.append("Then run bestyet-init again; it only adds what is missing.")
         raise ErrorReport(e.report(config, steps)) from None
@@ -1653,7 +1667,7 @@ def _show_plan(plan: Plan, new_doc: tuple[str, str] | None, args: argparse.Names
             print(f"  - {conflict}", file=out)
     if not new_doc and not plan.steps:
         print(
-            ("\n" if getattr(args, "guided", False) else "")
+            ("\n" if args.guided else "")
             + "Nothing to do: the document already has everything this script adds. "
             "To verify it against the contract, run bestyet-init --check.",
             file=out,
@@ -1677,16 +1691,8 @@ def _confirm(args: argparse.Namespace, out) -> bool:
             "not interactive; pass --yes to apply, or --dry-run to only see the plan "
             "(in a terminal, run it without options to be asked questions)"
         )
-    out.write("Apply these changes? [y/N] ")
-    out.flush()
-    try:
-        answer = sys.stdin.readline()
-    except KeyboardInterrupt:
-        print(file=out)
-        raise Interrupted("aborted; nothing was changed") from None
-    if not answer:
-        print(file=out)  # EOF: end the prompt line
-    if answer.strip().lower() in ("y", "yes"):
+    answer = _ask(out, "Apply these changes? [y/N] ", sys.stdin)  # EOF or Ctrl-C: aborted
+    if answer.lower() in ("y", "yes"):
         return True
     print("Not applied: nothing was changed.", file=out)
     return False

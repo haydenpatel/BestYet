@@ -33,7 +33,7 @@ The goals for version 1 (see [Status and Limitations](#status-and-limitations) f
 | `--workspace W` | Workspace id or name for the new document | With `--create` (asked for in a terminal) | none |
 | `--org O` | Organisation id or name, to narrow `--workspace` | No | all organisations |
 | `--name N` | Name of the new document; an existing name in the workspace is never duplicated | No | `BestYet` |
-| `--seed-events` | Also add the default events (the standard track and field list). Without it the Events table stays empty and you add events by hand in Grist | No | off |
+| `--seed-events` | Also add the default events (the standard track and field list). Without it the Events table stays empty (apart from the few events `--seed-implements` or `--demo-data` need) and you add events by hand in Grist | No | off |
 | `--seed-implements` | Also add the example implements, and only the events their rows use (Discus and Shot Put) if missing | No | off |
 | `--demo-data` | Also load fictional athletes, meets and results, with the example implements and only the events they use (not the full default list); refused unless those tables are empty | No | off |
 | `--allow-existing-tables` | Add to a document that has tables of its own (a blank one made in Grist has an empty `Table1`; `--create` avoids this) | No | off: refused |

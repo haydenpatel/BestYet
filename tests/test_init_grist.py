@@ -727,10 +727,13 @@ def test_interrupt_during_apply(capsys):
     assert capsys.readouterr().err == "error: aborted; re-run to add what is still missing\n"
 
 
-def test_eof_at_the_prompt_ends_the_line(monkeypatch, capsys):
+def test_eof_at_the_confirmation_aborts_with_nothing_changed(monkeypatch, capsys):
     monkeypatch.setattr(sys, "stdin", Stdin(""))
-    assert run(FakeGrist(), yes=False) == 0
-    assert "[y/N] \nNot applied" in capsys.readouterr().out
+    fake = FakeGrist()
+    assert run(fake, yes=False) == 130
+    captured = capsys.readouterr()
+    assert "[y/N] \n" in captured.out and "error: aborted; nothing was changed" in captured.err
+    assert fake.writes == []
 
 
 def test_dry_run_wins_over_yes(monkeypatch, capsys):
@@ -790,7 +793,6 @@ def test_plan_is_printed_before_the_first_write(capsys):
         ("n\n", False),
         ("\n", False),
         ("maybe\n", False),
-        ("", False),
     ],
 )
 def test_prompt_answers(monkeypatch, capsys, answer, applied):
@@ -1344,7 +1346,7 @@ def test_guided_new_document(monkeypatch, capsys):
 
 def test_guided_new_document_declined_at_the_confirmation(monkeypatch, capsys):
     fake = FakeGrist()
-    assert guided(monkeypatch, fake, "y\n\nn\nn\nn\n") == 0
+    assert guided(monkeypatch, fake, "y\n\nn\nn\nn\nn\n") == 0
     out = capsys.readouterr().out
     assert "--- Plan ---" in out and "Not applied" in out
     assert fake.created_docs == [] and fake.writes == []
@@ -1792,11 +1794,32 @@ def test_failure_after_create_says_grist_doc_id_still_points_at_the_old_document
     assert "currently points at a different document: GRIST_DOC_ID=NEWDOC" in err
 
 
-def test_unreadable_grist_doc_id_gets_the_usual_readable_error(monkeypatch, capsys):
-    monkeypatch.setattr(sys, "stdin", Stdin("", tty=True))
-    monkeypatch.setattr(sys.stdout, "isatty", lambda: True, raising=False)
-    assert main([], ENV, reply(404, "not found")) == 1
-    assert "could not find the document (HTTP 404)" in capsys.readouterr().err
+@pytest.mark.parametrize(
+    ("status", "reason"),
+    [(404, "could not find the document (HTTP 404)"), (403, "denied access (HTTP 403)")],
+)
+def test_an_unreadable_grist_doc_id_does_not_stop_the_questions(
+    monkeypatch, capsys, status, reason
+):
+    fake = FakeGrist()
+    orig = fake.handle
+
+    def handle(request):
+        if request.method == "GET" and request.url.path == f"/api/docs/{DOC}":
+            return httpx.Response(status, json={"error": "no"})
+        return orig(request)
+
+    fake.transport = httpx.MockTransport(handle)
+    assert guided(monkeypatch, fake, "y\nDoc\nn\nn\nn\ny\n", env=ENV) == 0
+    out = capsys.readouterr().out
+    assert "GRIST_DOC_ID is set but that document cannot be read." in out
+    assert reason in out and "Choose another document below." in out
+    assert "Set up that document?" not in out and "Use workspace 'Work'?" in out
+    assert fake.created_docs == [(10, "Doc")]
+
+
+def test_an_unreachable_server_still_gives_the_usual_error_after_the_note(monkeypatch, capsys):
+    terminal(monkeypatch, Stdin("", tty=True))
     assert main([], ENV, reply(401, "no")) == 1
     assert "rejected the API key" in capsys.readouterr().err
 
@@ -2152,3 +2175,71 @@ def test_the_subset_wording_is_singular_for_one_and_counts_what_is_there(capsys)
     assert run(fake, "--seed-implements", "--dry-run") == 0
     out = capsys.readouterr().out
     assert "Add 1 event required for the example implements (Discus; 1 already there)" in out
+
+
+# Review fixes.
+
+
+def test_the_workspace_and_its_documents_are_looked_up_once(monkeypatch):
+    fake = FakeGrist()
+    fake.workspaces = workspace_with("Alpha")
+    orig = fake.handle
+    listings = []
+
+    def handle(request):
+        if request.method == "GET" and request.url.path.endswith("/workspaces"):
+            listings.append(1)
+        return orig(request)
+
+    fake.transport = httpx.MockTransport(handle)
+    # guided: workspace y, new, name, demo n, events n, implements n, apply
+    assert guided(monkeypatch, fake, "y\nc\nDoc\nn\nn\nn\ny\n") == 0
+    # choose workspace (1), resolve + documents (1), final clash re-check (1)
+    assert len(listings) <= 3 + 1
+    assert fake.created_docs == [(10, "Doc")]
+
+
+def test_seed_implements_skips_the_implements_step_when_all_are_there(capsys):
+    fake = full_fake()
+    names = {r["fields"]["Name"]: r["id"] for r in fake.rows["Events"]}
+    fake.rows["Implements"] = [
+        {"id": i, "fields": {"Event": names[e], "Grade": g, "Weight": w}}
+        for i, (e, g, w) in enumerate(schema.EXAMPLE_IMPLEMENTS, 1)
+    ]
+    fake.rows["Events"] = [
+        r for r in fake.rows["Events"] if r["fields"]["Name"] not in ("100m", "800m")
+    ]
+    assert run(fake, "--demo-data", "--dry-run") == 0
+    out = capsys.readouterr().out
+    lines = [x for x in out.splitlines() if "implement" in x and "events required" not in x]
+    assert lines == []  # no "Add 0 example implements" line: nothing to add there
+    assert "Add demo data" in out
+
+
+@pytest.mark.parametrize("flag", ["--yes", "--dry-run"])
+def test_with_yes_or_dry_run_only_the_missing_value_is_asked(monkeypatch, capsys, flag):
+    fake = FakeGrist()
+    answers = "y\nDoc\ny\n"  # workspace, name, (apply for --dry-run is not asked)
+    assert guided(monkeypatch, fake, answers, "--create", flag) == 0
+    out = capsys.readouterr().out
+    assert "Use workspace 'Work'?" in out and "Name for the new document" in out
+    assert "Add demo data" not in out and "Add default events" not in out
+    assert "Add the example implements" not in out
+    assert "Pre-loaded data" not in out and "Example" not in out
+    if flag == "--yes":
+        assert fake.created_docs == [(10, "Doc")]
+        assert not fake.rows.get("Events") and not fake.rows.get("Implements")
+    else:
+        assert fake.created_docs == []
+
+
+def test_a_plain_guided_run_still_asks_everything(monkeypatch, capsys):
+    assert guided(monkeypatch, FakeGrist(), "y\nDoc\nn\nn\nn\nn\n") == 0
+    out = capsys.readouterr().out
+    assert "Add demo data" in out and "Add default events" in out
+
+
+def test_check_rejects_name_like_the_other_write_flags(capsys):
+    with pytest.raises(SystemExit):
+        main(["--check", "--name", "X"], ENV, FakeGrist().transport)
+    assert "--name" in capsys.readouterr().err
