@@ -259,3 +259,20 @@ def test_app_and_script_have_no_test_name_logic():
 
     for module in (bestyet, bestyet.check, bestyet.init_grist):
         assert "TEST" not in inspect.getsource(module)
+
+
+@pytest.mark.parametrize("old_name", ["Personal bests", "  PERSONAL BESTS "])
+def test_a_page_with_another_case_counts_as_the_page(old_name, capsys):
+    fake = initialised()
+    fake.views.clear()
+    fake.views[1] = old_name
+    assert differences(fake) == []
+    assert main(["--check"], ENV, fake.transport) == 0
+    assert "no differences" in capsys.readouterr().out
+    assert fake.views == {1: old_name}  # never renamed
+
+
+def test_a_missing_page_is_reported_by_its_name(capsys):
+    fake = initialised()
+    fake.views.clear()
+    assert differences(fake) == ["page 'Personal Bests' is missing"]
