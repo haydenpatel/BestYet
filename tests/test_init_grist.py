@@ -115,9 +115,16 @@ def event_names(fake):
     return [r["fields"]["Name"] for r in fake.rows.get("Events", [])]
 
 
-def test_fresh_doc_seeds_events_only_by_default():
+def test_fresh_doc_gets_empty_example_tables_by_default():
     fake = FakeGrist()
     assert run(fake) == 0
+    assert not fake.rows.get("Events") and not fake.rows.get("Implements")
+    assert "Events" in fake.tables and "Implements" in fake.tables  # the tables exist, empty
+
+
+def test_seed_events_adds_only_the_events():
+    fake = FakeGrist()
+    assert run(fake, "--seed-events") == 0
     assert [(r["fields"]["Name"], r["fields"]["Kind"]) for r in fake.rows["Events"]] == list(
         schema.EXAMPLE_EVENTS
     )
@@ -1134,7 +1141,7 @@ def test_partial_failure_after_create_names_the_document(capsys):
 
 def test_create_ends_with_a_short_done_message_and_next_steps(capsys):
     fake = FakeGrist()
-    assert run(fake, *CREATE, "--name", "My Doc", env=ENV_NO_DOC) == 0
+    assert run(fake, *CREATE, "--name", "My Doc", "--seed-events", env=ENV_NO_DOC) == 0
     captured = capsys.readouterr()
     out = captured.out
     assert captured.err == "" and KEY not in out and "Summary" not in out
@@ -1308,11 +1315,12 @@ def guided(monkeypatch, fake, answers, *argv, env=ENV_NO_DOC):
 
 def test_guided_new_document(monkeypatch, capsys):
     fake = FakeGrist()
-    answers = "y\nMy Doc\nn\ny\ny\n"  # workspace, name, no demo, implements, apply
+    answers = "y\nMy Doc\nn\ny\ny\ny\n"  # workspace, name, no demo, events, implements, apply
     assert guided(monkeypatch, fake, answers) == 0
     out = capsys.readouterr().out
     assert fake.created_docs == [(10, "My Doc")]
     assert len(fake.rows["Implements"]) == len(schema.EXAMPLE_IMPLEMENTS)
+    assert len(fake.rows["Events"]) == len(schema.EXAMPLE_EVENTS)
     assert "Athletes" not in fake.rows
     assert "Use workspace 'Work'? [Y/n]" in out and "(Org One)" not in out
     assert "Create 'My Doc' in workspace 'Work'" in out and "GRIST_DOC_ID=NEWDOC" in out
@@ -1338,7 +1346,7 @@ def test_guided_default_name_and_demo_data(monkeypatch):
 def test_guided_existing_document(monkeypatch, capsys):
     fake = full_fake()
     del fake.tables["Meets"]
-    assert guided(monkeypatch, fake, "y\nn\nn\ny\n", env=ENV) == 0
+    assert guided(monkeypatch, fake, "y\nn\nn\nn\ny\n", env=ENV) == 0
     assert "Meets" in fake.tables and fake.created_docs == []
     assert "GRIST_DOC_ID=" not in capsys.readouterr().out
 
@@ -1347,7 +1355,7 @@ def test_guided_demo_is_not_offered_when_the_tables_have_rows(monkeypatch, capsy
     fake = full_fake()
     fake.rows["Athletes"] = [{"id": 1, "fields": {"Name": "A"}}]
     assert (
-        guided(monkeypatch, fake, "y\nn\n", env=ENV) == 0
+        guided(monkeypatch, fake, "y\nn\nn\n", env=ENV) == 0
     )  # existing, no implements; then nothing to do
     out = capsys.readouterr().out
     assert "Add demo data" not in out and "example implements" in out
@@ -1519,7 +1527,7 @@ def test_guided_lists_the_workspace_documents_and_sets_up_the_chosen_one(monkeyp
     fake = full_fake()
     del fake.tables["Meets"]
     fake.workspaces = workspace_with("Alpha", "Beta")
-    assert guided(monkeypatch, fake, "y\n2\nn\nn\ny\n", env=ENV_NO_DOC) == 0  # Beta, no extras
+    assert guided(monkeypatch, fake, "y\n2\nn\nn\nn\ny\n", env=ENV_NO_DOC) == 0  # Beta, no extras
     out = capsys.readouterr().out
     assert "1. Alpha" in out and "2. Beta" in out and "or C to create a new document:" in out
     assert "GRIST_DOC_ID" not in out.split("--- Plan ---")[0].split("2. Beta")[1]  # unset
@@ -1696,7 +1704,7 @@ def test_guided_org_that_does_not_exist_says_so(monkeypatch, capsys):
 def test_guided_existing_document_with_other_tables_asks_up_front(monkeypatch, capsys):
     fake = full_fake({**full_tables(), "Notes": {"A": {"type": "Text"}}})
     del fake.tables["Meets"]
-    assert guided(monkeypatch, fake, "y\ny\nn\nn\ny\n", env=ENV) == 0
+    assert guided(monkeypatch, fake, "y\ny\nn\nn\nn\ny\n", env=ENV) == 0
     out = capsys.readouterr().out
     assert "not part of BestYet (Notes)" in out and out.index("Notes") < out.index(
         "example implements"
@@ -1731,7 +1739,7 @@ def test_failed_default_table_removal_is_reported_not_planned(capsys):
 def test_grist_doc_id_is_offered_first_by_name(monkeypatch, capsys):
     fake = full_fake()
     del fake.tables["Meets"]
-    assert guided(monkeypatch, fake, "y\nn\nn\ny\n", env=ENV) == 0
+    assert guided(monkeypatch, fake, "y\nn\nn\nn\ny\n", env=ENV) == 0
     out = capsys.readouterr().out
     assert "GRIST_DOC_ID is set to the document 'Season 2025'. Set up that document? [Y/n]" in out
     assert "Which workspace" not in out and "Use workspace" not in out  # straight to the examples
@@ -1789,7 +1797,7 @@ def test_a_document_picked_from_the_list_gets_the_settings_step(monkeypatch, cap
     del fake.tables["Meets"]
     fake.workspaces = workspace_with("Alpha", "Beta")
     # GRIST_DOC_ID points elsewhere: say no to it, pick Beta
-    assert guided(monkeypatch, fake, "n\ny\n2\nn\nn\ny\n", env=ENV) == 0
+    assert guided(monkeypatch, fake, "n\ny\n2\nn\nn\nn\ny\n", env=ENV) == 0
     out = capsys.readouterr().out
     assert settings_step_in(out, "DOC1") and "currently points at a different document" in out
     assert "keep using that other document" in out and "2. Then run bestyet-init --check" in out
@@ -1799,7 +1807,7 @@ def test_a_picked_document_with_no_grist_doc_id_set_gets_an_add_line(monkeypatch
     fake = full_fake()
     del fake.tables["Meets"]
     fake.workspaces = workspace_with("Alpha", "Beta")
-    assert guided(monkeypatch, fake, "y\n2\nn\nn\ny\n") == 0
+    assert guided(monkeypatch, fake, "y\n2\nn\nn\nn\ny\n") == 0
     out = capsys.readouterr().out
     assert settings_step_in(out, "DOC1") and "Add this line to your settings" in out
 
@@ -1807,7 +1815,7 @@ def test_a_picked_document_with_no_grist_doc_id_set_gets_an_add_line(monkeypatch
 def test_an_already_complete_picked_document_still_prints_the_settings_note(monkeypatch, capsys):
     fake = full_fake()
     fake.workspaces = workspace_with("Alpha", "Beta")
-    assert guided(monkeypatch, fake, "y\n2\nn\nn\n") == 0
+    assert guided(monkeypatch, fake, "y\n2\nn\nn\nn\n") == 0
     out = capsys.readouterr().out
     assert "Nothing to do" in out and settings_step_in(out, "DOC1")
     assert "Then run bestyet-init --check" not in out
@@ -1817,14 +1825,14 @@ def test_an_already_complete_picked_document_still_prints_the_settings_note(monk
 def test_the_document_in_grist_doc_id_needs_no_settings_step(monkeypatch, capsys):
     fake = full_fake()
     del fake.tables["Meets"]
-    assert guided(monkeypatch, fake, "y\nn\nn\ny\n", env=ENV) == 0  # yes: that document
+    assert guided(monkeypatch, fake, "y\nn\nn\nn\ny\n", env=ENV) == 0  # yes: that document
     out = capsys.readouterr().out
     assert "GRIST_DOC_ID=" not in out and "Update GRIST_DOC_ID" not in out
     assert "- Run bestyet-init --check" in out
     fake = full_fake()
     fake.workspaces = workspace_with("Alpha")
     env = {**ENV, "GRIST_DOC_ID": "DOC0"}  # no, then pick the very same document from the list
-    assert guided(monkeypatch, fake, "n\ny\n1\nn\nn\n", env=env) == 0
+    assert guided(monkeypatch, fake, "n\ny\n1\nn\nn\nn\n", env=env) == 0
     out = capsys.readouterr().out
     assert "Nothing to do" in out and "GRIST_DOC_ID=DOC0" not in out
 
@@ -1833,7 +1841,7 @@ def test_using_the_existing_document_after_a_name_clash_gets_the_settings_step(m
     fake = full_fake()
     del fake.tables["Meets"]
     fake.workspaces = workspace_with("My Doc")
-    assert guided(monkeypatch, fake, "y\nc\nmy doc\ny\nn\nn\ny\n") == 0
+    assert guided(monkeypatch, fake, "y\nc\nmy doc\ny\nn\nn\nn\ny\n") == 0
     out = capsys.readouterr().out
     assert fake.created_docs == [] and settings_step_in(out, "DOC0")
 
@@ -1854,7 +1862,7 @@ def test_a_picked_document_that_fails_midway_gets_the_settings_item(monkeypatch,
     del fake.tables["Meets"]
     fake.workspaces = workspace_with("Alpha", "Beta")
     fake.fail_on = "POST /api/docs/DOC1/tables"
-    assert guided(monkeypatch, fake, "y\n2\nn\nn\ny\n") == 1
+    assert guided(monkeypatch, fake, "y\n2\nn\nn\nn\ny\n") == 1
     err = capsys.readouterr().err
     assert "Add this line to your settings (environment or .env): GRIST_DOC_ID=DOC1" in err
     assert "3. Then run bestyet-init again; it only adds what is missing." in err
@@ -1891,21 +1899,84 @@ def test_demo_data_is_asked_first_and_yes_skips_the_implements_question(monkeypa
     assert len(fake.rows["Implements"]) == len(schema.EXAMPLE_IMPLEMENTS)
 
 
-def test_declining_demo_data_asks_about_the_implements(monkeypatch, capsys):
+def test_declining_demo_data_asks_about_events_then_implements(monkeypatch, capsys):
     fake = FakeGrist()
-    assert guided(monkeypatch, fake, "y\nDoc\nn\ny\ny\n") == 0
+    assert guided(monkeypatch, fake, "y\nDoc\nn\ny\ny\ny\n") == 0
     out = capsys.readouterr().out
-    assert out.index("Add demo data") < out.index("Add the example implements")
+    assert out.index("Add demo data") < out.index("Add the example events")
+    assert out.index("Add the example events") < out.index("Add the example implements")
+    assert len(fake.rows["Events"]) == len(schema.EXAMPLE_EVENTS)
     assert len(fake.rows["Implements"]) == len(schema.EXAMPLE_IMPLEMENTS)
-    assert "Results" not in fake.rows or not fake.rows["Results"]
+    assert not fake.rows.get("Results")
 
 
-def test_implements_are_asked_when_demo_data_is_not_offered(monkeypatch, capsys):
+def test_nothing_chosen_leaves_the_example_tables_empty_and_the_plan_quiet(monkeypatch, capsys):
+    fake = FakeGrist()
+    assert guided(monkeypatch, fake, "y\nDoc\nn\nn\ny\n") == 0  # demo n, events n, apply
+    out = capsys.readouterr().out
+    assert "Add the example implements" not in out  # no Events being added: skipped
+    assert "Example data" not in out and "example data" not in out
+    assert "with 5 tables and the 'Personal bests' page." in out
+    assert not fake.rows.get("Events") and not fake.rows.get("Implements")
+
+
+def test_events_only_then_implements_are_offered_but_can_be_declined(monkeypatch, capsys):
+    fake = FakeGrist()
+    assert guided(monkeypatch, fake, "y\nDoc\nn\ny\nn\ny\n") == 0
+    out = capsys.readouterr().out
+    assert "Add the example implements" in out
+    assert "    - Events (missing ones only)\n" in out and "Implements (missing" not in out
+    assert len(fake.rows["Events"]) == len(schema.EXAMPLE_EVENTS)
+    assert not fake.rows.get("Implements")
+
+
+def test_implements_are_skipped_when_the_example_events_are_not_there(monkeypatch, capsys):
+    fake = full_fake()
+    fake.rows["Events"] = []  # no example events and none being added
+    assert guided(monkeypatch, fake, "y\nn\nn\n", env=ENV) == 0
+    out = capsys.readouterr().out
+    assert "Add the example events" in out and "Add the example implements" not in out
+    assert "Nothing to do" in out
+
+
+def test_demo_data_yes_asks_nothing_more_about_events_or_implements(monkeypatch, capsys):
+    fake = FakeGrist()
+    assert guided(monkeypatch, fake, "y\nDoc\ny\ny\n") == 0
+    out = capsys.readouterr().out
+    assert "Add the example events" not in out and "Add the example implements" not in out
+    assert len(fake.rows["Events"]) == len(schema.EXAMPLE_EVENTS)
+
+
+def test_seed_implements_adds_only_the_missing_events_it_needs(capsys):
+    fake = full_fake()
+    fake.rows["Events"] = [r for r in fake.rows["Events"] if r["fields"]["Name"] != "Discus"]
+    before = len(fake.rows["Events"])
+    assert run(fake, "--seed-implements") == 0
+    names = [r["fields"]["Name"] for r in fake.rows["Events"]]
+    assert len(names) == before + 1 and names.count("Discus") == 1  # no duplicates
+    assert fake.rows.get("Implements")
+
+
+def test_without_a_seed_flag_missing_events_are_left_alone(capsys):
+    fake = full_fake()
+    fake.rows["Events"] = []
+    assert run(fake) == 0
+    assert "Nothing to do" in capsys.readouterr().out and fake.rows["Events"] == []
+
+
+def test_seed_events_cannot_be_combined_with_check(capsys):
+    with pytest.raises(SystemExit):
+        main(["--check", "--seed-events"], ENV, FakeGrist().transport)
+    assert "--seed-events" in capsys.readouterr().err
+
+
+def test_events_and_implements_are_asked_when_demo_data_is_not_offered(monkeypatch, capsys):
     fake = full_fake()
     fake.rows["Athletes"] = [{"id": 1, "fields": {"Name": "A"}}]
-    assert guided(monkeypatch, fake, "y\nn\n", env=ENV) == 0
+    assert guided(monkeypatch, fake, "y\nn\nn\n", env=ENV) == 0
     out = capsys.readouterr().out
-    assert "Add demo data" not in out and "Add the example implements" in out
+    assert "Add demo data" not in out
+    assert "Add the example events" in out and "Add the example implements" in out  # events there
 
 
 def test_no_setting_up_header_when_there_is_nothing_to_show_under_it(capsys):

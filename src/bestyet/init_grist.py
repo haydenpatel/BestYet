@@ -10,8 +10,9 @@ after confirmation (``--yes`` skips the prompt; without a terminal ``--yes`` or 
 is required). ``--check`` instead reads the document (GET only), reports every difference from
 the contract (``bestyet.check``, also run by the app at startup) and exits non-zero on any.
 
-Seed rows are plan steps too: the example Events always, the example Implements only with
-``--seed-implements``. ``--demo-data`` adds fictional athletes, meets and results as the last
+Seed rows are opt-in plan steps (a fresh document ends up with empty Events and Implements
+tables unless asked): the example Events with ``--seed-events``, the example Implements with
+``--seed-implements`` (which also adds the missing Events they need). ``--demo-data`` adds fictional athletes, meets and results as the last
 step; it plans the example Events and Implements it needs, and refuses (writing nothing) unless
 Athletes, Meets and Results are all empty.
 
@@ -630,15 +631,18 @@ def build_plan(
     implements: Sequence[Mapping] | None = None,
     seed_implements: bool = False,
     demo_data: bool = False,
+    seed_events: bool = False,
 ) -> Plan:
     """Diff the contract against `actual`; additions only.
 
     `actual` maps table id -> {column id: column fields} for the contract tables and the
     summary table that are in the document. `pages` are the page names that exist and
     `summary_tables` the ids of real summary tables. `events` and `implements` are the
-    existing rows of those tables (None: the table does not exist yet). Missing example
-    Events are always planned, missing example Implements only if `seed_implements`.
-    `demo_data` adds the demo step last; the caller checks that the tables are empty.
+    existing rows of those tables (None: the table does not exist yet). Seeds are opt-in:
+    missing example Events only if `seed_events`, missing example Implements only if
+    `seed_implements`; either of those and `demo_data` also plan the missing example Events
+    they need. `demo_data` adds the demo step last; the caller checks that the tables are
+    empty.
 
     Grist keeps ids unique ignoring case, so ids are matched ignoring case. A case-only
     difference is never added or renamed: it is a conflict the owner must fix in Grist.
@@ -671,16 +675,28 @@ def build_plan(
     if not plan.conflicts:
         _plan_summary(plan, actual, pages, summary_tables)
     if not plan.conflicts:  # nothing is seeded into a document that needs a manual fix
-        _plan_seeds(plan, events or [], implements or [], seed_implements or demo_data)
+        _plan_seeds(
+            plan,
+            events or [],
+            implements or [],
+            seed_events or seed_implements or demo_data,
+            seed_implements or demo_data,
+        )
         if demo_data:
             plan.steps.append(LoadDemoData())
     return plan
 
 
 def _plan_seeds(
-    plan: Plan, events: Sequence[Mapping], implements: Sequence[Mapping], implements_too: bool
+    plan: Plan,
+    events: Sequence[Mapping],
+    implements: Sequence[Mapping],
+    events_too: bool,
+    implements_too: bool,
 ) -> None:
-    missing_events = _missing_events(events)
+    """Seeds are opt-in. `events_too`: add the missing example Events (also true when
+    Implements are wanted: they need their Events)."""
+    missing_events = _missing_events(events) if events_too else ()
     if missing_events:
         plan.steps.append(SeedEvents())
     # The Events rows added above are new, so they cannot have Implements yet.
@@ -944,9 +960,14 @@ def parse_args(argv: Sequence[str] | None, can_ask: bool = False) -> argparse.Na
         help="read-only: report every difference from the contract, exit non-zero on any",
     )
     p.add_argument(
+        "--seed-events",
+        action="store_true",
+        help="also add the example Events (the standard athletics list; off by default)",
+    )
+    p.add_argument(
         "--seed-implements",
         action="store_true",
-        help="also add the example Implements rows (Events are always seeded); only adds",
+        help="also add the example Implements rows, and the example Events they need",
     )
     p.add_argument(
         "--allow-existing-tables",
@@ -960,7 +981,8 @@ def parse_args(argv: Sequence[str] | None, can_ask: bool = False) -> argparse.Na
         "--demo-data",
         action="store_true",
         help=(
-            "also load fictional athletes, meets and results (and the example Implements); "
+            "also load fictional athletes, meets and results (and the example Events and "
+            "Implements they use); "
             "refused unless Athletes, Meets and Results are all empty"
         ),
     )
@@ -974,6 +996,7 @@ def parse_args(argv: Sequence[str] | None, can_ask: bool = False) -> argparse.Na
                 ("--workspace", args.workspace),
                 ("--org", args.org),
                 ("--dry-run", args.dry_run),
+                ("--seed-events", args.seed_events),
                 ("--seed-implements", args.seed_implements),
                 ("--demo-data", args.demo_data),
                 ("--allow-existing-tables", args.allow_existing_tables),
@@ -1003,7 +1026,8 @@ def wants_guided(args: argparse.Namespace, stdin, stdout) -> bool:
         return False
     others = (
         args.create, args.workspace, args.org, args.name, args.dry_run,
-        args.seed_implements, args.allow_existing_tables, args.yes, args.demo_data,
+        args.seed_events, args.seed_implements, args.allow_existing_tables, args.yes,
+        args.demo_data,
     )  # fmt: skip
     incomplete = (args.create and not args.workspace) or (
         (args.workspace or args.org) and not args.create
@@ -1247,6 +1271,7 @@ def guide(args: argparse.Namespace, config: Config, client_for, out, stdin) -> b
                     args.name = None
     args.create = create
     demo_allowed = True
+    events_ready = False  # a new document has no Events; an existing one may have them
     if not create:
         args.doc_id = doc_id
         with _explaining(config, "document"), client_for(doc_id) as client:
@@ -1263,17 +1288,27 @@ def guide(args: argparse.Namespace, config: Config, client_for, out, stdin) -> b
                     return False
                 args.allow_existing_tables = True
             demo_allowed = not _non_empty(client, contract_table_ids(tables))
+            if any(t["id"] == "Events" for t in tables):
+                events_ready = not _missing_events(client.records("Events"))
     if demo_allowed and not args.demo_data:
         args.demo_data = _ask_yes_no(
             out,
             "Add demo data (a few fictional athletes, meets and results, with the example "
-            "implements they use)?",
+            "events and implements they use)?",
             stdin,
         )
-    if not args.seed_implements and not args.demo_data:  # demo data already adds them
-        args.seed_implements = _ask_yes_no(
-            out, "Add the example implements (a starting list you can edit in Grist)?", stdin
-        )
+    if not args.demo_data:  # demo data already covers Events and Implements
+        if not args.seed_events and not args.seed_implements:
+            args.seed_events = _ask_yes_no(
+                out,
+                "Add the example events (the standard athletics list you can edit in Grist)?",
+                stdin,
+            )
+        # Implements need their Events: ask only if they are being added or are already there.
+        if not args.seed_implements and (args.seed_events or events_ready):
+            args.seed_implements = _ask_yes_no(
+                out, "Add the example implements (a starting list you can edit in Grist)?", stdin
+            )
     return True
 
 
@@ -1400,7 +1435,12 @@ def run(
             _set_up_existing(client, config, args, out)
         return
     # A new document is empty apart from that default table, so the plan is the full contract.
-    plan = build_plan({}, seed_implements=args.seed_implements, demo_data=args.demo_data)
+    plan = build_plan(
+        {},
+        seed_implements=args.seed_implements,
+        demo_data=args.demo_data,
+        seed_events=args.seed_events,
+    )
     if not _show_plan(plan, lead, args, out) or args.dry_run or not _confirm(args, out):
         return
     with _explaining(config, "workspace"), client_for("") as admin:
@@ -1476,6 +1516,7 @@ def _set_up_existing(client: GristClient, config: Config, args: argparse.Namespa
         implements,
         args.seed_implements,
         args.demo_data,
+        args.seed_events,
     )
     if not _show_plan(plan, [], args, out) or args.dry_run or not _confirm(args, out):
         _finish(plan, warnings, args, out)
