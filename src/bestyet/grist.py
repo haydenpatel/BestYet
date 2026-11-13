@@ -1,6 +1,8 @@
 """Thin synchronous Grist REST client. Errors never carry headers, requests or the API key."""
 
 import json
+import socket
+import ssl
 from typing import Any, Self
 from urllib.parse import quote
 
@@ -16,12 +18,45 @@ def _q(value: object) -> str:
 
 
 class GristError(Exception):
-    """A failed Grist call. `status` is the HTTP status, or 0 when no response arrived."""
+    """A failed Grist call. `status` is the HTTP status, or 0 when no response arrived.
 
-    def __init__(self, status: int, message: str):
+    `cause` classifies a failure with no usable answer: "dns", "refused", "timeout", "tls",
+    "other" (no response), "redirect" or "invalid_json"; None for an ordinary HTTP error.
+    `method` and `path` (below `/api/`) say which request failed, so callers can tell a
+    document-level request from another one."""
+
+    def __init__(
+        self,
+        status: int,
+        message: str,
+        cause: str | None = None,
+        path: str | None = None,
+        method: str | None = None,
+    ):
         super().__init__(f"Grist error {status}: {message}" if status else message)
         self.status = status
         self.message = message
+        self.cause = cause
+        self.path = path
+        self.method = method
+
+
+def _cause(exc: BaseException) -> str:
+    """Classify a transport failure by walking its cause chain."""
+    if isinstance(exc, httpx.TimeoutException):
+        return "timeout"
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(current, socket.gaierror):
+            return "dns"
+        if isinstance(current, ConnectionRefusedError):
+            return "refused"
+        if isinstance(current, ssl.SSLError):
+            return "tls"
+        current = current.__cause__ or current.__context__
+    return "other"
 
 
 def _error_message(response: httpx.Response) -> str:
@@ -73,24 +108,30 @@ class GristClient:
     def _request(self, method: str, path: str, *, params: dict | None = None, body: Any = None):
         # Raise only after the except block so no httpx exception (which holds the request and
         # its headers) is left as __context__.
-        failure = None
+        failure = cause = None
         try:
             response = self._http.request(method, path, params=params, json=body)
-        except httpx.TimeoutException:
-            failure = "Grist request timed out"
-        except httpx.HTTPError:
-            failure = "Could not reach Grist"
+        except httpx.TimeoutException as e:
+            failure, cause = "Grist request timed out", _cause(e)
+        except httpx.HTTPError as e:
+            failure, cause = "Could not reach Grist", _cause(e)
         if failure:
-            raise GristError(0, failure)
+            raise GristError(0, failure, cause, path, method)
         if not response.is_success:
-            raise GristError(response.status_code, _error_message(response))
+            raise GristError(
+                response.status_code,
+                _error_message(response),
+                "redirect" if response.is_redirect else None,
+                path,
+                method,
+            )
         if not response.content:
             return None
         try:
             return response.json()
         except ValueError:
             failure = "Grist returned invalid JSON"
-        raise GristError(response.status_code, failure)
+        raise GristError(response.status_code, failure, "invalid_json", path, method)
 
     def _doc(self, path: str, **kwargs):
         return self._request(kwargs.pop("method", "GET"), f"docs/{self._doc_id}/{path}", **kwargs)
@@ -163,6 +204,14 @@ class GristClient:
 
     def workspaces(self, org: int | str) -> list:
         return self._request("GET", f"orgs/{_q(org)}/workspaces")
+
+    def document(self) -> dict:
+        """The document's own record (its `name`, for the questions)."""
+        return self._request("GET", f"docs/{self._doc_id}")
+
+    def workspace(self, workspace_id: int | str) -> dict:
+        """One workspace, with its `docs`."""
+        return self._request("GET", f"workspaces/{_q(workspace_id)}")
 
     def create_doc(self, workspace_id: int, name: str) -> str:
         """Create an empty document. Returns its id."""

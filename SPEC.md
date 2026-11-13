@@ -48,6 +48,7 @@ Table and column ids are case sensitive. At startup, read the schema from `GET /
 - `Name` (Text)
 - `Kind` (Choice: `Time` or `Distance`). Time: lower is better. Distance: higher is better.
 - Example seed: 60m, 80m, 100m, 200m, 400m, 800m, 1500m, 3000m, 80m Hurdles, 100m Hurdles, Long Jump, High Jump, Triple Jump, Shot Put, Discus, Javelin, Turbo Javelin, Vortex.
+- The default event list is opt-in (`--seed-events` in the init script), not loaded by default.
 
 ### Meets
 - `Name` (Text, unique, for example "Club night 12 Nov 2025")
@@ -172,8 +173,8 @@ Requirements:
 - Uses Grist's REST API only, with the same `GRIST_URL` and `GRIST_API_KEY` settings as the app.
 - Can create a new empty document in a given workspace (for example `--create --workspace <id-or-name> --name "..."`), or set up an existing empty document given by `GRIST_DOC_ID`.
 - Creates the tables, columns, Choice lists, Ref links, the computed and trigger formulas from "Reference formulas", and the PB summary table with its `Best` column. The summary table is created through a view section on the `Personal bests` page, only if that page is missing; an existing page is never changed. It sets `visibleCol` on the Ref columns listed under "Ref columns show names" only where it is unset, and creates no other pages or forms (the other pages are Grist's own raw-data views).
-- Seeds the Events table (the example list) and the Implements table (optional, with the example rows).
-- Optional `--demo-data`: loads a few fictional athletes, meets and results so the app has something to show. It is a plan step like the others and also seeds the example Events and Implements it needs. The demo data must be obviously fake. It only loads into a document whose Athletes, Meets and Results tables are all empty (or one the script has just created), and otherwise refuses. This protects real data without restricting what the document is called.
+- Optionally seeds the Events table (`--seed-events`, the default event list) and the Implements table (`--seed-implements`, the example rows). Both are opt-in, so a user can end up with empty tables. Each seed adds only the events it needs: `--seed-implements` the events its rows use (Discus and Shot Put), `--demo-data` the events its results and those implements use. Existing rows are never changed or duplicated.
+- Optional `--demo-data`: loads a few fictional athletes, meets and results so the app has something to show. It is a plan step like the others and also seeds the Implements and the events it needs. The demo data must be obviously fake. It only loads into a document whose Athletes, Meets and Results tables are all empty (or one the script has just created), and otherwise refuses. This protects real data without restricting what the document is called.
 - Makes no assumptions about the environment: it works on a document with any name, against any Grist server. `--create` defaults to the name "BestYet" and accepts any `--name`. Nothing in the script or the app may require a particular name or marker, so anyone can set up a fresh production document with it.
 - Idempotent: running it again on an already initialised document makes no changes and says so. It only adds what is missing and never drops, renames or overwrites anything.
 - Optional `--check`: validates an existing document against the contract and reports every difference. The app reuses the same check at startup.
