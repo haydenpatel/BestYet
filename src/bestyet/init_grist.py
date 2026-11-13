@@ -1283,7 +1283,7 @@ def settings_lines(doc_id: str, old_doc_id: str) -> list[str]:
                 "points at a different document (this script does not change your settings):"
             ),
             f"     GRIST_DOC_ID={doc_id}",
-            "   Until you do, bestyet-init and the app keep using that other document.",
+            "     Until you do, bestyet-init and the app keep using that other document.",
         ]
     return [
         (
