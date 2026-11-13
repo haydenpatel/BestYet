@@ -1157,7 +1157,7 @@ def test_create_ends_with_a_short_done_message_and_next_steps(capsys):
         "Done. Created 'My Doc' in workspace 'Work' with 5 tables, the 'Personal bests' page"
         in done
     )
-    assert "and example data." in done and "Needs attention" not in done
+    assert "and pre-loaded data." in done and "Needs attention" not in done
     assert "\n     GRIST_DOC_ID=NEWDOC\n" in done  # on a line of its own
     assert done.index("GRIST_DOC_ID=NEWDOC") < done.index("2. Then run bestyet-init --check")
     assert "does not change your settings" in done
@@ -1274,7 +1274,7 @@ def test_plan_is_grouped_in_plain_words(capsys):
         for line in out.splitlines()
         if line.startswith("  ") and not line.startswith("    ")
     ]
-    assert headings == ["Document", "Tables", "Personal bests", "Example data"]
+    assert headings == ["Document", "Tables", "Personal bests", "Pre-loaded data"]
     assert "Create 'BestYet' in workspace 'Work'" in out
     assert "showing each athlete's best per event" in out
     assert "Add demo data: 3 athletes, 2 meets, 7 results\n" in out
@@ -1923,7 +1923,7 @@ def test_all_no_leaves_the_tables_empty_and_hints_to_add_events(monkeypatch, cap
     out = capsys.readouterr().out
     assert "Add default events (standard track and field list)? [y/N]" in out
     assert "Add the example implements (a starting list you can edit in Grist)? [y/N]" in out
-    assert "Example data" not in out and "example data" not in out
+    assert "Pre-loaded data" not in out and "pre-loaded data" not in out
     assert "This also adds" not in out
     assert "with 5 tables and the 'Personal bests' page." in out
     assert not fake.rows.get("Events") and not fake.rows.get("Implements")
@@ -1931,17 +1931,47 @@ def test_all_no_leaves_the_tables_empty_and_hints_to_add_events(monkeypatch, cap
     assert "Kind: Time or Distance" in out and "cannot record results" in out
 
 
-def test_implements_yes_events_no_adds_only_the_events_they_use_and_says_so(monkeypatch, capsys):
+NOTE_TEXT = (
+    f"Note: the implements use the {DISCUS_SHOT} events, so answering yes also adds those events."
+)
+PROMPT = "Add the example implements (a starting list you can edit in Grist)?"
+
+
+def test_implements_yes_events_no_adds_only_the_events_they_use(monkeypatch, capsys):
     fake = FakeGrist()
     assert guided(monkeypatch, fake, "y\nDoc\nn\nn\ny\ny\n") == 0  # events no, implements yes
     out = capsys.readouterr().out
-    assert f"This also adds the {DISCUS_SHOT} events." in out
-    assert out.index("This also adds") < out.index("--- Plan ---")
-    assert "Add the example implements (a starting list you can edit in Grist)? [y/N]" in out
+    assert f"{NOTE_TEXT}\n{PROMPT} [y/N]" in out  # the note comes right before the question
+    assert out.index(NOTE_TEXT) < out.index("--- Plan ---")
+    assert "This also adds" not in out  # nothing about it before the plan any more
     assert f"Add the 2 default events: {DISCUS_SHOT}" in out
     assert {r["fields"]["Name"] for r in fake.rows["Events"]} == set(implement_event_names())
     assert len(fake.rows["Implements"]) == len(schema.EXAMPLE_IMPLEMENTS)
     assert "add your events by hand" in out.lower()  # the full list is not there
+
+
+def test_the_implements_note_is_shown_only_when_yes_would_add_events(monkeypatch, capsys):
+    fake = FakeGrist()  # events yes: they are being added anyway
+    assert guided(monkeypatch, fake, "y\nDoc\nn\ny\nn\ny\n") == 0
+    assert "Note:" not in capsys.readouterr().out
+    fake = full_fake()  # Discus and Shot Put already in the document
+    assert guided(monkeypatch, fake, "y\nn\nn\nn\n", env=ENV) == 0
+    assert "Note:" not in capsys.readouterr().out
+    fake = FakeGrist()  # the question is skipped through the flag
+    argv = ("--create", "--name", "Given", "--seed-implements")
+    assert guided(monkeypatch, fake, "y\nn\nn\ny\n", *argv) == 0
+    out = capsys.readouterr().out
+    assert "Note:" not in out and PROMPT not in out
+    fake = FakeGrist()  # demo data yes: no implements question at all
+    assert guided(monkeypatch, fake, "y\nDoc\ny\ny\n") == 0
+    assert "Note:" not in capsys.readouterr().out
+
+
+def test_the_note_is_shown_for_an_existing_document_missing_those_events(monkeypatch, capsys):
+    fake = full_fake()
+    fake.rows["Events"] = [r for r in fake.rows["Events"] if r["fields"]["Name"] != "Discus"]
+    assert guided(monkeypatch, fake, "y\nn\nn\ny\ny\n", env=ENV) == 0
+    assert f"{NOTE_TEXT}\n{PROMPT}" in capsys.readouterr().out
 
 
 def test_no_note_when_the_events_are_added_or_already_there(monkeypatch, capsys):
@@ -2040,7 +2070,7 @@ def test_done_message_columns_and_examples():
     assert done_message([cols], None) == "Done. Added missing columns in the table Results."
     both = [cols, AddColumns("Athletes", (schema.table("Athletes").columns[0],)), SeedEvents()]
     assert done_message(both, None) == (
-        "Done. Added missing columns in the tables Results and Athletes and example data."
+        "Done. Added missing columns in the tables Results and Athletes and pre-loaded data."
     )
 
 

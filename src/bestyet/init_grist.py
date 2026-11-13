@@ -782,7 +782,7 @@ def _plan_summary(
 
 # Plan and summary text: what the user cares about, grouped, not one line per internal step.
 
-GROUPS = ("Tables", "Calculated columns", "Personal bests", "Display", "Example data", "Other")
+GROUPS = ("Tables", "Calculated columns", "Personal bests", "Display", "Pre-loaded data", "Other")
 
 
 def grouped(
@@ -839,7 +839,7 @@ def grouped(
             example.append(_seed_text("example implement", s.add, s.have, past))
         elif isinstance(s, LoadDemoData):
             example.append("Added demo data" if past else f"Add demo data: {s._counts()}")
-    out["Example data"].extend(example)
+    out["Pre-loaded data"].extend(example)
     if behind_the_scenes and not any(out.values()):
         out["Other"].append("Update the existing tables (calculated columns, names in Ref columns)")
     return [(g, lines) for g, lines in out.items() if lines]
@@ -897,13 +897,13 @@ def done_message(applied: Sequence[Step], doc: tuple[str, str] | None) -> str:
     if doc:
         parts = [f"{len(tables)} table{'' if len(tables) == 1 else 's'}"] if tables else []
         parts += [f"the {p!r} page" for p in pages]
-        parts += ["example data"] if example else []
+        parts += ["pre-loaded data"] if example else []
         with_ = f" with {_and(parts)}" if parts else ""
         return f"Done. Created {doc[0]!r} in {doc[1]}{with_}."
     parts = [_the_tables(tables)] if tables else []
     parts += [f"missing columns in {_the_tables(columns)}"] if columns else []
     parts += [f"the {p!r} page" for p in pages]
-    parts += ["example data"] if example else []
+    parts += ["pre-loaded data"] if example else []
     if not parts:
         parts = ["the missing behind-the-scenes parts"]
     return f"Done. Added {_and(parts)}."
@@ -1367,16 +1367,17 @@ def guide(args: argparse.Namespace, config: Config, client_for, out, stdin) -> b
                 out, "Add default events (standard track and field list)?", stdin
             )
         if not args.seed_implements:
+            names = implement_event_names()
+            if not args.seed_events and any(_norm(n) not in present_events for n in names):
+                kind = "events" if len(names) > 1 else "event"
+                print(
+                    f"Note: the implements use the {_and(list(names))} {kind}, so answering yes "
+                    f"also adds {'those' if len(names) > 1 else 'that'} {kind}.",
+                    file=out,
+                )
             args.seed_implements = _ask_yes_no(
                 out, "Add the example implements (a starting list you can edit in Grist)?", stdin
             )
-        names = implement_event_names()
-        if (
-            args.seed_implements
-            and not args.seed_events
-            and any(_norm(n) not in present_events for n in names)
-        ):
-            print(f"\nThis also adds the {_and(list(names))} events.", file=out)
     return True
 
 
