@@ -1304,10 +1304,14 @@ def guide(args: argparse.Namespace, config: Config, client_for, out, stdin) -> b
                 "Add the example events (the standard athletics list you can edit in Grist)?",
                 stdin,
             )
-        # Implements need their Events: ask only if they are being added or are already there.
-        if not args.seed_implements and (args.seed_events or events_ready):
+        if not args.seed_implements:
+            # Implements need their Events: say so unless they are being added or already there.
+            needs_events = not (args.seed_events or events_ready)
+            note = " This also adds the example events they use." if needs_events else ""
             args.seed_implements = _ask_yes_no(
-                out, "Add the example implements (a starting list you can edit in Grist)?", stdin
+                out,
+                f"Add the example implements (a starting list you can edit in Grist)?{note}",
+                stdin,
             )
     return True
 
