@@ -3,7 +3,7 @@ from fake_grist import BASE, DOC, KEY, FakeGrist
 from test_init_grist import ENV, run
 
 from bestyet import StartupError, create_app, schema
-from bestyet.check import ContractError, check_document, require_contract
+from bestyet.check import ContractError, check_document, has_page, page_names, require_contract
 from bestyet.config import Config
 from bestyet.grist import GristClient
 from bestyet.init_grist import main
@@ -99,6 +99,24 @@ def test_raw_data_view_is_not_a_page():
         return response
 
     fake.doc = doc
+    assert differences(fake) == [f"page {schema.SUMMARY.page!r} is missing"]
+
+
+@pytest.mark.parametrize(
+    "name", ["Personal bests", "personal bests", " PERSONAL BESTS ", "Personal Bests"]
+)
+def test_page_name_matches_ignoring_case_and_spaces(name, capsys):
+    fake = initialised()
+    fake.views.clear()
+    fake.views[1] = name
+    assert differences(fake) == []
+    assert main(["--check"], ENV, fake.transport) == 0
+
+
+def test_page_with_another_name_is_missing():
+    fake = initialised()
+    fake.views.clear()
+    fake.views[1] = "Personal best"
     assert differences(fake) == [f"page {schema.SUMMARY.page!r} is missing"]
 
 
@@ -259,3 +277,43 @@ def test_app_and_script_have_no_test_name_logic():
 
     for module in (bestyet, bestyet.check, bestyet.init_grist):
         assert "TEST" not in inspect.getsource(module)
+
+
+@pytest.mark.parametrize(
+    "pages, expected",
+    [
+        (["Personal Bests"], True),
+        (["Personal bests"], True),
+        (["  personal BESTS\t"], True),
+        (["Other", None, "", 5, "Personal Bests"], True),
+        (["Personal Bests", "Personal Bests"], True),
+        (["Personal  Bests"], False),  # inner whitespace differs
+        (["PersonalBests"], False),
+        ([None, "", 5], False),
+        ([], False),
+    ],
+)
+def test_has_page(pages, expected):
+    assert has_page(pages, "Personal Bests") is expected
+
+
+def test_page_names_tolerates_malformed_views():
+    fake = initialised()
+    orig = fake.doc
+
+    def doc(method, rest, body):
+        response = orig(method, rest, body)
+        if rest == "tables/_grist_Views/records":
+            records = [
+                {"id": 1},
+                {"id": 2, "fields": None},
+                {"id": 3, "fields": {"type": "raw_data", "name": "Raw"}},
+                {"id": 4, "fields": {}},
+                {"id": 5, "fields": {"name": "Personal bests"}},
+            ]
+            return type(response)(200, json={"records": records})
+        return response
+
+    fake.doc = doc
+    with GristClient(BASE, DOC, CONFIG.grist_api_key, transport=fake.transport) as client:
+        assert page_names(client) == ["Personal bests"]

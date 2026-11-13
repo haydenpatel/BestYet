@@ -7,7 +7,7 @@ A table or column whose id differs only in case counts as a difference (Grist id
 sensitive in the contract). Tables that are not part of the contract are ignored.
 """
 
-from collections.abc import Collection, Mapping
+from collections.abc import Collection, Iterable, Mapping
 
 from bestyet import schema
 from bestyet.grist import GristClient
@@ -132,18 +132,21 @@ def find_differences(
                 _column_differences(s.id, schema.Column(name, "Int"), cols[name], refs, "Int", out)
             else:
                 _column_differences(s.id, column, cols[name], refs, column.type, out)
-    if s.page not in pages:
+    if not has_page(pages, s.page):
         out.append(f"page {s.page!r} is missing")
     return out
 
 
+def has_page(pages: Iterable[str], name: str) -> bool:
+    """Whether a page called `name` exists: case and surrounding spaces do not matter."""
+    wanted = name.strip().casefold()
+    return any(str(p or "").strip().casefold() == wanted for p in pages)
+
+
 def page_names(client: GristClient) -> list[str]:
     """Names of the document's pages (Grist's raw data views are not pages)."""
-    return [
-        v["fields"]["name"]
-        for v in client.records("_grist_Views")
-        if v["fields"].get("type") != "raw_data"
-    ]
+    views = [v.get("fields") or {} for v in client.records("_grist_Views")]
+    return [f["name"] for f in views if f.get("type") != "raw_data" and f.get("name") is not None]
 
 
 def check_document(client: GristClient) -> list[str]:

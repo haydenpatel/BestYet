@@ -43,7 +43,7 @@ from urllib.parse import urlsplit
 import httpx
 
 from bestyet import dates, schema
-from bestyet.check import check_document, format_differences, page_names
+from bestyet.check import check_document, format_differences, has_page, page_names
 from bestyet.config import Config, ConfigError
 from bestyet.grist import GristClient, GristError
 
@@ -761,7 +761,7 @@ def _plan_summary(
     if exists is not None and (exists != s.id or exists not in summary_tables):
         plan.conflicts.append(f"table {exists!r} exists but is not the summary table {s.id!r}")
         return
-    page_exists = s.page in pages
+    page_exists = has_page(pages, s.page)
     if page_exists and exists is None:
         plan.conflicts.append(
             f"page {s.page!r} exists but summary table {s.id!r} does not; "
