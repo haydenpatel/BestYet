@@ -16,16 +16,21 @@ UNBEATABLE_MARK = "9999.99"  # a Distance mark no existing result can beat, so I
 
 
 def _find_setup(grist):
-    """An athlete with a Grade and a Distance event that has an Implement for that Grade."""
+    """An athlete with a Grade and Division, and a Distance event that has an Implement for both."""
     events = {e["id"]: e["fields"] for e in grist.records("Events")}
-    athletes = [a for a in grist.records("Athletes") if a["fields"].get("Grade")]
+    athletes = [
+        a
+        for a in grist.records("Athletes")
+        if a["fields"].get("Grade") and a["fields"].get("Division")
+    ]
     for implement in grist.records("Implements"):
         f = implement["fields"]
         event = events.get(f.get("Event"))
         if not event or event.get("Kind") != "Distance" or not f.get("Weight"):
             continue
         for athlete in athletes:
-            if athlete["fields"]["Grade"] == f.get("Grade"):
+            fields = athlete["fields"]
+            if fields["Grade"] == f.get("Grade") and fields["Division"] == f.get("Division"):
                 return athlete, f["Event"], f
     pytest.skip("the document has no athlete with a matching Implements row (load demo data)")
 
@@ -57,6 +62,7 @@ def test_result_computed_columns(test_grist):
         fields = row["fields"]
         assert fields["Value"] == float(UNBEATABLE_MARK)
         assert fields["Grade"] == athlete["fields"]["Grade"]
+        assert fields["Division"] == athlete["fields"]["Division"]
         assert fields["Implement"] == implement["Weight"]
         assert fields["IsPB"] is True
         assert fields["Date"] == MEET_DATE

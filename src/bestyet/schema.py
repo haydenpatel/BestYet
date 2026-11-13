@@ -184,7 +184,7 @@ SUMMARY = Summary(
 SUMMARY_REQUIRED_COLUMNS = ("count", *(c.id for c in SUMMARY.columns))
 
 # Results columns the app may write. Division, Grade and Implement are normally left out
-# of the payload so their trigger formulas fill them in; send Division to override the default.
+# of the payload so their trigger formulas fill them in; update Division after creation to override the default.
 WRITABLE_RESULTS_COLUMNS = (
     "Athlete",
     "Event",

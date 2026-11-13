@@ -66,7 +66,7 @@ Writable by the app:
 - `Athlete` (Ref to Athletes), `Event` (Ref to Events), `Meet` (Ref to Meets)
 - `Mark` (Text, as typed: `2.98`, `13.45`, `2:15.30`)
 - `Place` (Int, optional)
-- `Division` (Choice), `Grade` (Choice) and `Implement` (Text): leave these out of the payload for normal entry so Grist fills them in. Send `Division` only to override the athlete's default division for one result.
+- `Division` (Choice), `Grade` (Choice) and `Implement` (Text): leave these out of the payload for normal entry so Grist fills them in. To override the athlete's default division for one result, update `Division` after the result is created: a create call that sets `Athlete` recomputes it.
 
 Computed by Grist, read only (never write these):
 - `Value` (Numeric): `Mark` parsed to a number (seconds for times, metres for distances). Errors if `Mark` cannot be parsed.
