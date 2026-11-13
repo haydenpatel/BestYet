@@ -66,7 +66,8 @@ Writable by the app:
 - `Athlete` (Ref to Athletes), `Event` (Ref to Events), `Meet` (Ref to Meets)
 - `Mark` (Text, as typed: `2.98`, `13.45`, `2:15.30`)
 - `Place` (Int, optional)
-- `Division` (Choice), `Grade` (Choice) and `Implement` (Text): leave these out of the payload for normal entry so Grist fills them in. To override the athlete's default division for one result, update `Division` after the result is created: a create call that sets `Athlete` recomputes it.
+- `Grade` (Choice) and `Implement` (Text): leave these out of the payload for normal entry so Grist fills them in.
+- `Division` (Choice): not sent on create (a create call that sets `Athlete` recomputes it). To override the athlete's default division for one result, edit `Division` on the result afterwards.
 
 Computed by Grist, read only (never write these):
 - `Value` (Numeric): `Mark` parsed to a number (seconds for times, metres for distances). Errors if `Mark` cannot be parsed.
@@ -77,7 +78,7 @@ Computed by Grist, read only (never write these):
 - `Results.Grade` = `$Athlete.Grade`, recalculated when `Athlete` is set. Changing an athlete's grade later does not alter old results.
 - `Results.Division` = `$Athlete.Division`, recalculated when `Athlete` is set. It can be overridden per result.
 - `Results.Implement` = lookup in `Implements` by Event, Grade and Division (exact match, blank when there is no row), recalculated when `Event` or `Division` is set.
-- Limitation: `Implement` is triggered by `Event` and `Division` only. Send `Athlete` and `Event` in the same create call so all the defaults resolve. A later edit to Athlete or Grade does not recompute Implement.
+- Limitation: `Grade` and `Division` are triggered by `Athlete` only, and `Implement` by `Event` and `Division` only. Send `Athlete` and `Event` in the same create call so all the defaults resolve. A later edit to `Athlete` recomputes `Grade` and `Division` (replacing a division override); an edit to `Grade` alone does not recompute `Implement`: edit `Event` or `Division` to refresh it.
 
 ### PB summary table
 `Results_summary_Athlete_Event_Implement` has one row per Athlete, Event and Implement, with `count` and `Best` (Numeric). It is part of the contract, and the app reads personal bests from it: the app never calculates them. If it is missing or renamed, the startup check fails.
