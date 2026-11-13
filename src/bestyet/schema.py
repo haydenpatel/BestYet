@@ -52,7 +52,7 @@ class Summary:
     source_table: str
     group_by: tuple[str, ...]
     columns: tuple[Column, ...]  # beyond the group-by columns and Grist's own ``count``
-    page: str = "Personal bests"  # the page whose view section keeps the table alive
+    page: str = "Personal Bests"  # the page whose view section keeps the table alive
 
 
 # Formulas, verbatim from SPEC.md.
@@ -160,7 +160,7 @@ SUMMARY = Summary(
     source_table="Results",
     group_by=("Athlete", "Event", "Implement"),
     columns=(Column("Best", "Numeric", formula=BEST_FORMULA, is_formula=True),),
-    page="Personal bests",
+    page="Personal Bests",
 )
 # Grist adds ``count`` (Int) to every summary table; the contract requires it.
 SUMMARY_REQUIRED_COLUMNS = ("count", *(c.id for c in SUMMARY.columns))

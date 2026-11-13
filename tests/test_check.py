@@ -102,6 +102,24 @@ def test_raw_data_view_is_not_a_page():
     assert differences(fake) == [f"page {schema.SUMMARY.page!r} is missing"]
 
 
+@pytest.mark.parametrize(
+    "name", ["Personal bests", "personal bests", " PERSONAL BESTS ", "Personal Bests"]
+)
+def test_page_name_matches_ignoring_case_and_spaces(name, capsys):
+    fake = initialised()
+    fake.views.clear()
+    fake.views[1] = name
+    assert differences(fake) == []
+    assert main(["--check"], ENV, fake.transport) == 0
+
+
+def test_page_with_another_name_is_missing():
+    fake = initialised()
+    fake.views.clear()
+    fake.views[1] = "Personal best"
+    assert differences(fake) == [f"page {schema.SUMMARY.page!r} is missing"]
+
+
 def test_plain_table_with_the_summary_name_is_not_a_summary_table():
     fake = initialised()
     fake.summary_tables.clear()
