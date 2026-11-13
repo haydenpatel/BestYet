@@ -793,6 +793,12 @@ def grouped(
     return [(g, lines) for g, lines in out.items() if lines]
 
 
+def _the_tables(names: Sequence[str]) -> str:
+    """ "the table A" or "the tables A, B and C"."""
+    unique = list(dict.fromkeys(names))
+    return f"the table {unique[0]}" if len(unique) == 1 else f"the tables {_and(unique)}"
+
+
 def _and(items: Sequence[str]) -> str:
     return items[0] if len(items) == 1 else f"{', '.join(items[:-1])} and {items[-1]}"
 
@@ -811,13 +817,13 @@ def done_message(applied: Sequence[Step], doc: tuple[str, str] | None) -> str:
     ]
     example = any(isinstance(s, (SeedEvents, SeedImplements, LoadDemoData)) for s in applied)
     if doc:
-        parts = [f"{len(tables)} tables"] if tables else []
+        parts = [f"{len(tables)} table{'' if len(tables) == 1 else 's'}"] if tables else []
         parts += [f"the {p!r} page" for p in pages]
         parts += ["example data"] if example else []
         with_ = f" with {_and(parts)}" if parts else ""
         return f"Done. Created {doc[0]!r} in {doc[1]}{with_}."
-    parts = [f"tables {', '.join(tables)}"] if tables else []
-    parts += [f"missing columns in {', '.join(columns)}"] if columns else []
+    parts = [_the_tables(tables)] if tables else []
+    parts += [f"missing columns in {_the_tables(columns)}"] if columns else []
     parts += [f"the {p!r} page" for p in pages]
     parts += ["example data"] if example else []
     if not parts:
@@ -1257,13 +1263,16 @@ def guide(args: argparse.Namespace, config: Config, client_for, out, stdin) -> b
                     return False
                 args.allow_existing_tables = True
             demo_allowed = not _non_empty(client, contract_table_ids(tables))
-    if not args.seed_implements and not args.demo_data:
-        args.seed_implements = _ask_yes_no(
-            out, "Add the example implements (a starting list you can edit in Grist)?", stdin
-        )
     if demo_allowed and not args.demo_data:
         args.demo_data = _ask_yes_no(
-            out, "Add demo data (a few fictional athletes, meets and results)?", stdin
+            out,
+            "Add demo data (a few fictional athletes, meets and results, with the example "
+            "implements they use)?",
+            stdin,
+        )
+    if not args.seed_implements and not args.demo_data:  # demo data already adds them
+        args.seed_implements = _ask_yes_no(
+            out, "Add the example implements (a starting list you can edit in Grist)?", stdin
         )
     return True
 
@@ -1553,8 +1562,6 @@ def _apply(
     """Apply the steps. `done` holds what was already done in this run (the document);
     `doc` is the (name, workspace) of a document this run created."""
     applied: list[Step] = []
-    if doc is None:
-        _section(out, "Setting up")
     for i, step in enumerate(plan.steps):
         try:
             step.apply(client)

@@ -11,9 +11,21 @@ from fake_grist import BASE, DOC, KEY, FakeGrist
 from bestyet import dates, marks, schema
 from bestyet.config import Config
 from bestyet.grist import GristClient
-from bestyet.init_grist import build_plan, column_payload, main
+from bestyet.init_grist import (
+    AddColumns,
+    CreateTable,
+    SeedEvents,
+    build_plan,
+    column_payload,
+    done_message,
+    main,
+)
 
 ENV = {"GRIST_URL": BASE, "GRIST_DOC_ID": DOC, "GRIST_API_KEY": KEY}
+
+
+def CT(name):
+    return CreateTable(schema.table(name), ())
 
 
 def plain(table):
@@ -751,7 +763,7 @@ def test_plan_is_printed_before_the_first_write(capsys):
     seen = spy_first_write(fake, capsys)
     assert run(fake) == 0
     assert "--- Plan ---" in seen[0] and "Create Athletes" in seen[0] and "Summary" not in seen[0]
-    assert "Done. Added tables Athletes" in capsys.readouterr().out
+    assert "Done. Added the tables Athletes" in capsys.readouterr().out
 
 
 @pytest.mark.parametrize(
@@ -1145,7 +1157,7 @@ def test_existing_document_done_message_says_what_was_added(capsys):
     del fake.tables["Meets"]
     assert run(fake) == 0
     out = capsys.readouterr().out
-    assert "Done. Added tables Meets." in out
+    assert "Done. Added the table Meets." in out
     assert "GRIST_DOC_ID" not in out and "\n  - Run bestyet-init --check" in out
 
 
@@ -1153,7 +1165,7 @@ def test_columns_added_to_an_existing_table_are_named(capsys):
     fake = full_fake()
     del fake.tables["Results"]["Mark"]
     assert run(fake) == 0
-    assert "Done. Added missing columns in Results." in capsys.readouterr().out
+    assert "Done. Added missing columns in the table Results." in capsys.readouterr().out
 
 
 def test_warnings_are_shown_when_the_run_stops_part_way(capsys):
@@ -1296,7 +1308,7 @@ def guided(monkeypatch, fake, answers, *argv, env=ENV_NO_DOC):
 
 def test_guided_new_document(monkeypatch, capsys):
     fake = FakeGrist()
-    answers = "y\nMy Doc\ny\nn\ny\n"  # workspace, name, implements, no demo, apply
+    answers = "y\nMy Doc\nn\ny\ny\n"  # workspace, name, no demo, implements, apply
     assert guided(monkeypatch, fake, answers) == 0
     out = capsys.readouterr().out
     assert fake.created_docs == [(10, "My Doc")]
@@ -1309,7 +1321,7 @@ def test_guided_new_document(monkeypatch, capsys):
 
 def test_guided_new_document_declined_at_the_confirmation(monkeypatch, capsys):
     fake = FakeGrist()
-    assert guided(monkeypatch, fake, "y\nc\n\nn\nn\nn\n") == 0
+    assert guided(monkeypatch, fake, "y\n\nn\nn\nn\n") == 0
     out = capsys.readouterr().out
     assert "--- Plan ---" in out and "Not applied" in out
     assert fake.created_docs == [] and fake.writes == []
@@ -1317,7 +1329,7 @@ def test_guided_new_document_declined_at_the_confirmation(monkeypatch, capsys):
 
 def test_guided_default_name_and_demo_data(monkeypatch):
     fake = FakeGrist()
-    assert guided(monkeypatch, fake, "y\n\nn\ny\ny\n") == 0
+    assert guided(monkeypatch, fake, "y\n\ny\ny\n") == 0
     assert fake.created_docs == [(10, "BestYet")]
     assert len(fake.rows["Results"]) == len(schema.DEMO_RESULTS)
     assert len(fake.rows["Implements"]) == len(schema.EXAMPLE_IMPLEMENTS)  # demo needs them
@@ -1396,7 +1408,7 @@ def test_guided_flags_skip_their_questions(monkeypatch, capsys):
     assert guided(monkeypatch, fake, "y\nn\ny\n", *argv) == 0  # workspace, demo data, apply
     out = capsys.readouterr().out
     assert "Use workspace 'Work'?" in out and "Name for the new" not in out
-    assert "example implements" not in out and "Add demo data" in out
+    assert "Add the example implements" not in out and "Add demo data" in out
     assert fake.created_docs == [(10, "Given")]
 
 
@@ -1868,3 +1880,75 @@ def test_failure_with_table1_left_mentions_allow_existing_tables_once(capsys):
     assert run(fake, *CREATE, env=ENV_NO_DOC) == 1
     steps = capsys.readouterr().err.split("--- Next steps ---")[1]
     assert "4. If Table1 is still in the document" in steps and steps.count("Table1") == 1
+
+
+def test_demo_data_is_asked_first_and_yes_skips_the_implements_question(monkeypatch, capsys):
+    fake = FakeGrist()
+    assert guided(monkeypatch, fake, "y\nDoc\ny\ny\n") == 0  # workspace, name, demo yes, apply
+    out = capsys.readouterr().out
+    assert "Add demo data" in out and "Add the example implements" not in out
+    assert "Events (missing ones only), Implements (missing ones only), demo data (" in out
+    assert len(fake.rows["Implements"]) == len(schema.EXAMPLE_IMPLEMENTS)
+
+
+def test_declining_demo_data_asks_about_the_implements(monkeypatch, capsys):
+    fake = FakeGrist()
+    assert guided(monkeypatch, fake, "y\nDoc\nn\ny\ny\n") == 0
+    out = capsys.readouterr().out
+    assert out.index("Add demo data") < out.index("Add the example implements")
+    assert len(fake.rows["Implements"]) == len(schema.EXAMPLE_IMPLEMENTS)
+    assert "Results" not in fake.rows or not fake.rows["Results"]
+
+
+def test_implements_are_asked_when_demo_data_is_not_offered(monkeypatch, capsys):
+    fake = full_fake()
+    fake.rows["Athletes"] = [{"id": 1, "fields": {"Name": "A"}}]
+    assert guided(monkeypatch, fake, "y\nn\n", env=ENV) == 0
+    out = capsys.readouterr().out
+    assert "Add demo data" not in out and "Add the example implements" in out
+
+
+def test_no_setting_up_header_when_there_is_nothing_to_show_under_it(capsys):
+    fake = full_fake()
+    del fake.tables["Meets"]
+    assert run(fake) == 0
+    out = capsys.readouterr().out
+    assert "--- Setting up ---" not in out and "Done. Added the table Meets." in out
+    assert run(FakeGrist(), *CREATE, env=ENV_NO_DOC) == 0
+    out = capsys.readouterr().out
+    assert "--- Setting up ---\nCreated the document" in out  # something under it: kept
+
+
+@pytest.mark.parametrize(
+    ("steps", "doc", "expected"),
+    [
+        ([CT("Meets")], None, "Done. Added the table Meets."),
+        ([CT("Meets"), CT("Results")], None, "Done. Added the tables Meets and Results."),
+        (
+            [CT("Athletes"), CT("Events"), CT("Meets")],
+            None,
+            "Done. Added the tables Athletes, Events and Meets.",
+        ),
+        (
+            [CT("Athletes")],
+            ("X", "workspace 'W'"),
+            "Done. Created 'X' in workspace 'W' with 1 table.",
+        ),
+        (
+            [CT("Athletes"), CT("Events")],
+            ("X", "workspace 'W'"),
+            "Done. Created 'X' in workspace 'W' with 2 tables.",
+        ),
+    ],
+)
+def test_done_message_grammar(steps, doc, expected):
+    assert done_message(steps, doc) == expected
+
+
+def test_done_message_columns_and_examples():
+    cols = AddColumns("Results", (schema.table("Results").columns[0],))
+    assert done_message([cols], None) == "Done. Added missing columns in the table Results."
+    both = [cols, AddColumns("Athletes", (schema.table("Athletes").columns[0],)), SeedEvents()]
+    assert done_message(both, None) == (
+        "Done. Added missing columns in the tables Results and Athletes and example data."
+    )
