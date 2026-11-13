@@ -145,11 +145,8 @@ def has_page(pages: Iterable[str], name: str) -> bool:
 
 def page_names(client: GristClient) -> list[str]:
     """Names of the document's pages (Grist's raw data views are not pages)."""
-    return [
-        v["fields"]["name"]
-        for v in client.records("_grist_Views")
-        if v["fields"].get("type") != "raw_data"
-    ]
+    views = [v.get("fields") or {} for v in client.records("_grist_Views")]
+    return [f["name"] for f in views if f.get("type") != "raw_data" and f.get("name") is not None]
 
 
 def check_document(client: GristClient) -> list[str]:
