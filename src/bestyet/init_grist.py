@@ -426,7 +426,11 @@ def _missing_implements(
 
 @dataclass(frozen=True)
 class SeedEvents(Step):
-    """Add the example Events whose Name is not there yet."""
+    """Add the example Events whose Name is not there yet. `add` and `have`: how many the
+    plan found missing and already there (for its wording only)."""
+
+    add: int = 0
+    have: int = 0
 
     def describe(self) -> str:
         return "Add the example Events that are missing"
@@ -445,7 +449,11 @@ class SeedEvents(Step):
 
 @dataclass(frozen=True)
 class SeedImplements(Step):
-    """Add the example Implements whose Event and Grade pair is not there yet."""
+    """Add the example Implements whose Event and Grade pair is not there yet. `add` and
+    `have`: how many the plan found missing and already there (for its wording only)."""
+
+    add: int = 0
+    have: int = 0
 
     def describe(self) -> str:
         return "Add the example Implements that are missing"
@@ -698,10 +706,14 @@ def _plan_seeds(
     Implements are wanted: they need their Events)."""
     missing_events = _missing_events(events) if events_too else ()
     if missing_events:
-        plan.steps.append(SeedEvents())
-    # The Events rows added above are new, so they cannot have Implements yet.
-    if implements_too and (missing_events or _missing_implements(events, implements)):
-        plan.steps.append(SeedImplements())
+        plan.steps.append(
+            SeedEvents(len(missing_events), len(schema.EXAMPLE_EVENTS) - len(missing_events))
+        )
+    # Events added above are new, so they cannot have Implements yet: those count as missing.
+    missing_implements = _missing_implements(events, implements)
+    if implements_too and (missing_events or missing_implements):
+        total = len(schema.EXAMPLE_IMPLEMENTS)
+        plan.steps.append(SeedImplements(len(missing_implements), total - len(missing_implements)))
 
 
 def _plan_summary(
@@ -793,20 +805,25 @@ def grouped(
                 else "Show names instead of ids in the Ref columns"
             )
         elif isinstance(s, SeedEvents):
-            example.append("Events" if past else "Events (missing ones only)")
+            example.append(_seed_text("event", s.add, s.have, past))
         elif isinstance(s, SeedImplements):
-            example.append("Implements" if past else "Implements (missing ones only)")
+            example.append(_seed_text("implement", s.add, s.have, past))
         elif isinstance(s, LoadDemoData):
-            example.append(
-                "demo data"
-                if past
-                else f"demo data ({s._counts()}; only if those tables are empty)"
-            )
-    if example:
-        out["Example data"].append(", ".join(example))
+            example.append("Added demo data" if past else f"Add demo data: {s._counts()}")
+    out["Example data"].extend(example)
     if behind_the_scenes and not any(out.values()):
         out["Other"].append("Update the existing tables (calculated columns, names in Ref columns)")
     return [(g, lines) for g, lines in out.items() if lines]
+
+
+def _seed_text(noun: str, add: int, have: int, past: bool) -> str:
+    """ "Add the 18 example events", or "Add 5 example events (13 already there)"."""
+    verb = "Added" if past else "Add"
+    plural = noun if add == 1 else f"{noun}s"
+    if have == 0 and add > 1:
+        return f"{verb} the {add} example {plural}"
+    note = "" if past or have == 0 else f" ({have} already there)"
+    return f"{verb} {add} example {plural}{note}"
 
 
 def _the_tables(names: Sequence[str]) -> str:

@@ -235,7 +235,8 @@ def test_dry_run_lists_seed_steps_and_writes_nothing(capsys):
     fake.rows["Events"] = []
     assert run(fake, "--dry-run", "--seed-implements") == 0
     out = capsys.readouterr().out
-    assert "Events (missing ones only)" in out and "Implements (missing ones only)" in out
+    assert f"Add the {len(schema.EXAMPLE_EVENTS)} example events" in out
+    assert f"Add the {len(schema.EXAMPLE_IMPLEMENTS)} example implements" in out
     assert fake.writes == []
 
 
@@ -917,7 +918,7 @@ def test_demo_data_on_fresh_doc(capsys):
     assert len(fake.rows["Implements"]) == len(schema.EXAMPLE_IMPLEMENTS)  # seeded as needed
     assert len(fake.rows["Events"]) == len(schema.EXAMPLE_EVENTS)
     out = capsys.readouterr().out
-    assert out.index("Events (missing") < out.index("demo data (3 athletes")
+    assert out.index("example events") < out.index("Add demo data: 3 athletes")
 
 
 def test_demo_results_leave_computed_columns_to_grist():
@@ -975,7 +976,7 @@ def test_demo_data_twice_refuses_second_time(capsys):
 def test_demo_data_dry_run_and_prompt_write_nothing(monkeypatch, capsys):
     fake = full_fake()
     assert run(fake, "--demo-data", "--dry-run") == 0
-    assert "demo data (3 athletes" in capsys.readouterr().out and fake.writes == []
+    assert "Add demo data: 3 athletes" in capsys.readouterr().out and fake.writes == []
     monkeypatch.setattr(sys, "stdin", Stdin("n\n"))
     assert run(fake, "--demo-data", yes=False) == 0
     assert fake.writes == []
@@ -1270,7 +1271,8 @@ def test_plan_is_grouped_in_plain_words(capsys):
     assert headings == ["Document", "Tables", "Personal bests", "Example data"]
     assert "Create 'BestYet' in workspace 'Work'" in out
     assert "showing each athlete's best per event" in out
-    assert "(3 athletes, 2 meets, 7 results; only if those tables are empty)" in out
+    assert "Add demo data: 3 athletes, 2 meets, 7 results\n" in out
+    assert "only if those tables" not in out
     for hidden in ("Calculated", "Display", "Table1", "worked out", "Ref columns"):
         assert hidden not in out  # behind the scenes: done, not announced
     assert "Results_summary" not in out and "columns)" not in out and "(no rows" not in out
@@ -1895,7 +1897,8 @@ def test_demo_data_is_asked_first_and_yes_skips_the_implements_question(monkeypa
     assert guided(monkeypatch, fake, "y\nDoc\ny\ny\n") == 0  # workspace, name, demo yes, apply
     out = capsys.readouterr().out
     assert "Add demo data" in out and "Add the example implements" not in out
-    assert "Events (missing ones only), Implements (missing ones only), demo data (" in out
+    assert "example events" in out and "example implements" in out
+    assert "Add demo data: " in out
     assert len(fake.rows["Implements"]) == len(schema.EXAMPLE_IMPLEMENTS)
 
 
@@ -1928,7 +1931,8 @@ def test_implements_yes_without_events_adds_both(monkeypatch, capsys):
     assert guided(monkeypatch, fake, "y\nDoc\nn\nn\ny\ny\n") == 0  # events no, implements yes
     out = capsys.readouterr().out
     assert f"Add the example implements (a starting list you can edit in Grist)? {NOTE}" in out
-    assert "    - Events (missing ones only), Implements (missing ones only)\n" in out
+    assert f"    - Add the {len(schema.EXAMPLE_EVENTS)} example events\n" in out
+    assert f"    - Add the {len(schema.EXAMPLE_IMPLEMENTS)} example implements\n" in out
     assert len(fake.rows["Events"]) == len(schema.EXAMPLE_EVENTS)
     assert len(fake.rows["Implements"]) == len(schema.EXAMPLE_IMPLEMENTS)
 
@@ -1939,7 +1943,8 @@ def test_events_only_then_implements_are_offered_but_can_be_declined(monkeypatch
     out = capsys.readouterr().out
     assert "Add the example implements (a starting list you can edit in Grist)? [y/N]" in out
     assert NOTE not in out  # the Events are being added: the short wording
-    assert "    - Events (missing ones only)\n" in out and "Implements (missing" not in out
+    assert f"    - Add the {len(schema.EXAMPLE_EVENTS)} example events\n" in out
+    assert "example implements\n" not in out
     assert len(fake.rows["Events"]) == len(schema.EXAMPLE_EVENTS)
     assert not fake.rows.get("Implements")
 
@@ -2046,3 +2051,33 @@ def test_done_message_columns_and_examples():
     assert done_message(both, None) == (
         "Done. Added missing columns in the tables Results and Athletes and example data."
     )
+
+
+def test_plan_counts_what_is_added_and_what_is_already_there(capsys):
+    fake = full_fake()  # all example events present
+    fake.rows["Events"] = fake.rows["Events"][:-5]  # five missing
+    assert run(fake, "--seed-events", "--dry-run") == 0
+    n = len(schema.EXAMPLE_EVENTS)
+    assert f"Add 5 example events ({n - 5} already there)" in capsys.readouterr().out
+    fake = full_fake()  # all example events already there: no line
+    assert run(fake, "--seed-events", "--dry-run") == 0
+    assert "Nothing to do" in capsys.readouterr().out
+
+
+def test_plan_counts_for_implements_and_singular_wording(capsys):
+    fake = full_fake()
+    names = {r["fields"]["Name"]: r["id"] for r in fake.rows["Events"]}
+    fake.rows["Implements"] = [
+        {"id": i, "fields": {"Event": names[e], "Grade": g, "Weight": w}}
+        for i, (e, g, w) in enumerate(schema.EXAMPLE_IMPLEMENTS[:-1], 1)
+    ]
+    total = len(schema.EXAMPLE_IMPLEMENTS)
+    assert run(fake, "--seed-implements", "--dry-run") == 0
+    assert f"Add 1 example implement ({total - 1} already there)" in capsys.readouterr().out
+
+
+def test_counts_come_from_the_schema_for_a_fresh_document(capsys):
+    assert run(FakeGrist(), *CREATE, "--seed-implements", "--dry-run", env=ENV_NO_DOC) == 0
+    out = capsys.readouterr().out
+    assert f"Add the {len(schema.EXAMPLE_EVENTS)} example events" in out
+    assert f"Add the {len(schema.EXAMPLE_IMPLEMENTS)} example implements" in out
