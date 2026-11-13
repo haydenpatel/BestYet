@@ -18,10 +18,16 @@ from bestyet.init_grist import (
     build_plan,
     column_payload,
     done_message,
+    implement_event_names,
     main,
 )
 
 ENV = {"GRIST_URL": BASE, "GRIST_DOC_ID": DOC, "GRIST_API_KEY": KEY}
+
+
+def and_names(names):
+    names = list(names)
+    return names[0] if len(names) == 1 else f"{', '.join(names[:-1])} and {names[-1]}"
 
 
 def CT(name):
@@ -166,7 +172,7 @@ def test_existing_rows_are_kept_and_not_duplicated(capsys):
     assert run(fake, "--seed-implements") == 0
     names = event_names(fake)
     assert names.count("Discus") == 1 and "My Event" in names
-    assert len(names) == len(schema.EXAMPLE_EVENTS) + 1
+    assert names == ["Discus", "My Event", "Shot Put"]  # only the missing event it needs
     assert fake.rows["Events"][0]["fields"]["Kind"] == "Time"
     imps = [
         (r["fields"]["Event"], r["fields"]["Grade"], r["fields"]["Weight"])
@@ -189,9 +195,7 @@ def test_case_and_space_variants_are_not_re_added():
     ]
     before = json.dumps(fake.rows)
     assert run(fake, "--seed-implements") == 0
-    added = [r["fields"]["Name"] for r in fake.rows["Events"][3:]]
-    assert len(added) == len(schema.EXAMPLE_EVENTS) - 3
-    assert not {"Discus", "100m", "Shot Put"} & set(added)
+    assert len(fake.rows["Events"]) == 3  # Discus and Shot Put are there: no events added
     ids = {r["fields"]["Name"]: r["id"] for r in fake.rows["Events"]}
     new = [(r["fields"]["Event"], r["fields"]["Grade"]) for r in fake.rows["Implements"][2:]]
     assert new == [(1, "Grade 9"), (3, "Grade 8")]  # Discus 9 and Shot Put 8 only
@@ -211,7 +215,7 @@ def test_conflicts_get_no_seed_steps(capsys):
 def test_missing_events_table_with_seed_implements_plans_both_in_order():
     fake = FakeGrist()
     assert run(fake, "--seed-implements") == 0  # tables, then Events rows, then Implements
-    assert len(fake.rows["Events"]) == len(schema.EXAMPLE_EVENTS)
+    assert {r["fields"]["Name"] for r in fake.rows["Events"]} == set(implement_event_names())
     assert len(fake.rows["Implements"]) == len(schema.EXAMPLE_IMPLEMENTS)
 
 
@@ -235,8 +239,9 @@ def test_dry_run_lists_seed_steps_and_writes_nothing(capsys):
     fake.rows["Events"] = []
     assert run(fake, "--dry-run", "--seed-implements") == 0
     out = capsys.readouterr().out
-    assert f"Add the {len(schema.EXAMPLE_EVENTS)} example events" in out
+    assert f"Add the 2 default events: {and_names(implement_event_names())}" in out
     assert f"Add the {len(schema.EXAMPLE_IMPLEMENTS)} example implements" in out
+    assert f"Add the {len(schema.EXAMPLE_EVENTS)} default events" not in out  # not the full list
     assert fake.writes == []
 
 
@@ -916,9 +921,10 @@ def test_demo_data_on_fresh_doc(capsys):
     assert [m["fields"]["Name"] for m in fake.rows["Meets"]] == [m[0] for m in schema.DEMO_MEETS]
     assert demo_rows(fake) == [(a, e, m, k) for a, e, m, k, _ in schema.DEMO_RESULTS]
     assert len(fake.rows["Implements"]) == len(schema.EXAMPLE_IMPLEMENTS)  # seeded as needed
-    assert len(fake.rows["Events"]) == len(schema.EXAMPLE_EVENTS)
+    needed = set(implement_event_names()) | {r[1] for r in schema.DEMO_RESULTS}
+    assert {r["fields"]["Name"] for r in fake.rows["Events"]} == needed  # only what it uses
     out = capsys.readouterr().out
-    assert out.index("example events") < out.index("Add demo data: 3 athletes")
+    assert out.index("default events") < out.index("Add demo data: 3 athletes")
 
 
 def test_demo_results_leave_computed_columns_to_grist():
@@ -1415,10 +1421,11 @@ def test_guided_without_doc_id_and_without_documents_creates_a_new_one(monkeypat
 def test_guided_flags_skip_their_questions(monkeypatch, capsys):
     fake = FakeGrist()
     argv = ("--create", "--name", "Given", "--seed-implements")
-    assert guided(monkeypatch, fake, "y\nn\ny\n", *argv) == 0  # workspace, demo data, apply
+    assert guided(monkeypatch, fake, "y\nn\nn\ny\n", *argv) == 0  # workspace, demo, events, apply
     out = capsys.readouterr().out
     assert "Use workspace 'Work'?" in out and "Name for the new" not in out
     assert "Add the example implements" not in out and "Add demo data" in out
+    assert "Add default events" in out  # the events question stays separate
     assert fake.created_docs == [(10, "Given")]
 
 
@@ -1892,87 +1899,80 @@ def test_failure_with_table1_left_mentions_allow_existing_tables_once(capsys):
     assert "4. If Table1 is still in the document" in steps and steps.count("Table1") == 1
 
 
-def test_demo_data_is_asked_first_and_yes_skips_the_implements_question(monkeypatch, capsys):
+DISCUS_SHOT = "Discus and Shot Put"
+
+
+def test_the_implement_events_really_are_discus_and_shot_put():
+    assert and_names(implement_event_names()) == DISCUS_SHOT  # from the schema, not hard-coded
+
+
+def test_demo_data_is_asked_first_and_yes_skips_the_other_questions(monkeypatch, capsys):
     fake = FakeGrist()
     assert guided(monkeypatch, fake, "y\nDoc\ny\ny\n") == 0  # workspace, name, demo yes, apply
     out = capsys.readouterr().out
-    assert "Add demo data" in out and "Add the example implements" not in out
-    assert "example events" in out and "example implements" in out
-    assert "Add demo data: " in out
+    assert "Add demo data" in out and "Add default events" not in out
+    assert "Add the example implements" not in out
+    assert "This also adds" not in out  # demo data has its own plan lines
+    assert "Add the 4 example implements" in out and "Add demo data: 3 athletes" in out
     assert len(fake.rows["Implements"]) == len(schema.EXAMPLE_IMPLEMENTS)
 
 
-def test_declining_demo_data_asks_about_events_then_implements(monkeypatch, capsys):
+def test_all_no_leaves_the_tables_empty_and_hints_to_add_events(monkeypatch, capsys):
     fake = FakeGrist()
-    assert guided(monkeypatch, fake, "y\nDoc\nn\ny\ny\ny\n") == 0
+    assert guided(monkeypatch, fake, "y\nDoc\nn\nn\nn\ny\n") == 0
     out = capsys.readouterr().out
-    assert out.index("Add demo data") < out.index("Add the example events")
-    assert out.index("Add the example events") < out.index("Add the example implements")
-    assert len(fake.rows["Events"]) == len(schema.EXAMPLE_EVENTS)
-    assert len(fake.rows["Implements"]) == len(schema.EXAMPLE_IMPLEMENTS)
-    assert not fake.rows.get("Results")
-
-
-NOTE = "This also adds the example events they use."
-
-
-def test_nothing_chosen_leaves_the_example_tables_empty_and_the_plan_quiet(monkeypatch, capsys):
-    fake = FakeGrist()
-    assert guided(monkeypatch, fake, "y\nDoc\nn\nn\nn\ny\n") == 0  # demo, events, implements: no
-    out = capsys.readouterr().out
-    assert "Add the example events" in out and "Add the example implements" in out
+    assert "Add default events (standard track and field list)? [y/N]" in out
+    assert "Add the example implements (a starting list you can edit in Grist)? [y/N]" in out
     assert "Example data" not in out and "example data" not in out
+    assert "This also adds" not in out
     assert "with 5 tables and the 'Personal bests' page." in out
     assert not fake.rows.get("Events") and not fake.rows.get("Implements")
+    assert "add your events by hand in the events table in grist" in out.lower()
+    assert "Kind: Time or Distance" in out and "cannot record results" in out
 
 
-def test_implements_yes_without_events_adds_both(monkeypatch, capsys):
+def test_implements_yes_events_no_adds_only_the_events_they_use_and_says_so(monkeypatch, capsys):
     fake = FakeGrist()
     assert guided(monkeypatch, fake, "y\nDoc\nn\nn\ny\ny\n") == 0  # events no, implements yes
     out = capsys.readouterr().out
-    assert f"Add the example implements (a starting list you can edit in Grist)? {NOTE}" in out
-    assert f"    - Add the {len(schema.EXAMPLE_EVENTS)} example events\n" in out
-    assert f"    - Add the {len(schema.EXAMPLE_IMPLEMENTS)} example implements\n" in out
-    assert len(fake.rows["Events"]) == len(schema.EXAMPLE_EVENTS)
+    assert f"This also adds the {DISCUS_SHOT} events." in out
+    assert out.index("This also adds") < out.index("--- Plan ---")
+    assert "Add the example implements (a starting list you can edit in Grist)? [y/N]" in out
+    assert f"Add the 2 default events: {DISCUS_SHOT}" in out
+    assert {r["fields"]["Name"] for r in fake.rows["Events"]} == set(implement_event_names())
     assert len(fake.rows["Implements"]) == len(schema.EXAMPLE_IMPLEMENTS)
+    assert "add your events by hand" in out.lower()  # the full list is not there
 
 
-def test_events_only_then_implements_are_offered_but_can_be_declined(monkeypatch, capsys):
+def test_no_note_when_the_events_are_added_or_already_there(monkeypatch, capsys):
+    fake = FakeGrist()
+    assert guided(monkeypatch, fake, "y\nDoc\nn\ny\ny\ny\n") == 0  # events yes, implements yes
+    out = capsys.readouterr().out
+    assert "This also adds" not in out
+    assert f"Add the {len(schema.EXAMPLE_EVENTS)} default events" in out
+    assert "add your events by hand" not in out.lower()  # the full list was added
+    fake = full_fake()  # Discus and Shot Put are already there
+    assert guided(monkeypatch, fake, "y\nn\nn\ny\nn\n", env=ENV) == 0
+    assert "This also adds" not in capsys.readouterr().out
+
+
+def test_events_yes_implements_no_adds_only_the_events(monkeypatch, capsys):
     fake = FakeGrist()
     assert guided(monkeypatch, fake, "y\nDoc\nn\ny\nn\ny\n") == 0
     out = capsys.readouterr().out
-    assert "Add the example implements (a starting list you can edit in Grist)? [y/N]" in out
-    assert NOTE not in out  # the Events are being added: the short wording
-    assert f"    - Add the {len(schema.EXAMPLE_EVENTS)} example events\n" in out
-    assert "example implements\n" not in out
+    assert f"    - Add the {len(schema.EXAMPLE_EVENTS)} default events\n" in out
+    assert "example implements\n" not in out.split("--- Plan ---")[1]
     assert len(fake.rows["Events"]) == len(schema.EXAMPLE_EVENTS)
     assert not fake.rows.get("Implements")
 
 
-def test_implements_question_carries_the_note_when_the_example_events_are_not_there(
-    monkeypatch, capsys
-):
+def test_the_questions_are_always_asked_when_demo_data_is_declined(monkeypatch, capsys):
     fake = full_fake()
-    fake.rows["Events"] = []  # no example events and none being added
-    assert guided(monkeypatch, fake, "y\nn\nn\nn\n", env=ENV) == 0
+    fake.rows["Athletes"] = [{"id": 1, "fields": {"Name": "A"}}]  # demo data not offered
+    assert guided(monkeypatch, fake, "y\nn\nn\n", env=ENV) == 0
     out = capsys.readouterr().out
-    assert "Add the example events" in out and NOTE in out
-    assert "Nothing to do" in out
-
-
-def test_implements_question_is_short_when_the_events_are_already_there(monkeypatch, capsys):
-    fake = full_fake()
-    assert guided(monkeypatch, fake, "y\nn\nn\nn\n", env=ENV) == 0
-    out = capsys.readouterr().out
-    assert "Add the example implements" in out and NOTE not in out
-
-
-def test_demo_data_yes_asks_nothing_more_about_events_or_implements(monkeypatch, capsys):
-    fake = FakeGrist()
-    assert guided(monkeypatch, fake, "y\nDoc\ny\ny\n") == 0
-    out = capsys.readouterr().out
-    assert "Add the example events" not in out and "Add the example implements" not in out
-    assert len(fake.rows["Events"]) == len(schema.EXAMPLE_EVENTS)
+    assert "Add demo data" not in out
+    assert "Add default events" in out and "Add the example implements" in out
 
 
 def test_seed_implements_adds_only_the_missing_events_it_needs(capsys):
@@ -1996,15 +1996,6 @@ def test_seed_events_cannot_be_combined_with_check(capsys):
     with pytest.raises(SystemExit):
         main(["--check", "--seed-events"], ENV, FakeGrist().transport)
     assert "--seed-events" in capsys.readouterr().err
-
-
-def test_events_and_implements_are_asked_when_demo_data_is_not_offered(monkeypatch, capsys):
-    fake = full_fake()
-    fake.rows["Athletes"] = [{"id": 1, "fields": {"Name": "A"}}]
-    assert guided(monkeypatch, fake, "y\nn\nn\n", env=ENV) == 0
-    out = capsys.readouterr().out
-    assert "Add demo data" not in out
-    assert "Add the example events" in out and "Add the example implements" in out  # events there
 
 
 def test_no_setting_up_header_when_there_is_nothing_to_show_under_it(capsys):
@@ -2058,7 +2049,7 @@ def test_plan_counts_what_is_added_and_what_is_already_there(capsys):
     fake.rows["Events"] = fake.rows["Events"][:-5]  # five missing
     assert run(fake, "--seed-events", "--dry-run") == 0
     n = len(schema.EXAMPLE_EVENTS)
-    assert f"Add 5 example events ({n - 5} already there)" in capsys.readouterr().out
+    assert f"Add 5 default events ({n - 5} already there)" in capsys.readouterr().out
     fake = full_fake()  # all example events already there: no line
     assert run(fake, "--seed-events", "--dry-run") == 0
     assert "Nothing to do" in capsys.readouterr().out
@@ -2079,5 +2070,5 @@ def test_plan_counts_for_implements_and_singular_wording(capsys):
 def test_counts_come_from_the_schema_for_a_fresh_document(capsys):
     assert run(FakeGrist(), *CREATE, "--seed-implements", "--dry-run", env=ENV_NO_DOC) == 0
     out = capsys.readouterr().out
-    assert f"Add the {len(schema.EXAMPLE_EVENTS)} example events" in out
+    assert f"Add the 2 default events: {DISCUS_SHOT}" in out  # only what the implements use
     assert f"Add the {len(schema.EXAMPLE_IMPLEMENTS)} example implements" in out
