@@ -1924,18 +1924,16 @@ def test_all_no_leaves_the_tables_empty_and_hints_to_add_events(monkeypatch, cap
     assert guided(monkeypatch, fake, "y\nDoc\nn\nn\nn\ny\n") == 0
     out = capsys.readouterr().out
     assert "Add default events (standard track and field list)? [y/N]" in out
-    assert "Add the example implements (a starting list you can edit in Grist)? [y/N]" in out
+    assert "Add the example implements (a starting list you can edit in Grist)?\n" in out
+    assert QUALIFIER in out  # events no and missing: the qualifier line follows
     assert "Pre-loaded data" not in out and "pre-loaded data" not in out
-    assert "This also adds" not in out
     assert "with 5 tables and the 'Personal Bests' page." in out
     assert not fake.rows.get("Events") and not fake.rows.get("Implements")
     assert "add your events by hand in the events table in grist" in out.lower()
     assert "Kind: Time or Distance" in out and "cannot record results" in out
 
 
-NOTE_TEXT = (
-    f"Note: the implements use the {DISCUS_SHOT} events, so answering yes also adds those events."
-)
+QUALIFIER = f"This also adds the {DISCUS_SHOT} events, which the implements use."
 PROMPT = "Add the example implements (a starting list you can edit in Grist)?"
 
 
@@ -1943,9 +1941,11 @@ def test_implements_yes_events_no_adds_only_the_events_they_use(monkeypatch, cap
     fake = FakeGrist()
     assert guided(monkeypatch, fake, "y\nDoc\nn\nn\ny\ny\n") == 0  # events no, implements yes
     out = capsys.readouterr().out
-    assert f"{NOTE_TEXT}\n{PROMPT} [y/N]" in out  # the note comes right before the question
-    assert out.index(NOTE_TEXT) < out.index("--- Plan ---")
-    assert "This also adds" not in out  # nothing about it before the plan any more
+    assert (
+        f"{PROMPT}\n{QUALIFIER} [y/N]" in out
+    )  # the qualifier follows the question, before the answer
+    assert out.index(QUALIFIER) < out.index("--- Plan ---")
+    assert "Note:" not in out
     assert f"Add the 2 default events: {DISCUS_SHOT}" in out
     assert {r["fields"]["Name"] for r in fake.rows["Events"]} == set(implement_event_names())
     assert len(fake.rows["Implements"]) == len(schema.EXAMPLE_IMPLEMENTS)
@@ -1955,25 +1955,27 @@ def test_implements_yes_events_no_adds_only_the_events_they_use(monkeypatch, cap
 def test_the_implements_note_is_shown_only_when_yes_would_add_events(monkeypatch, capsys):
     fake = FakeGrist()  # events yes: they are being added anyway
     assert guided(monkeypatch, fake, "y\nDoc\nn\ny\nn\ny\n") == 0
-    assert "Note:" not in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert QUALIFIER not in out and f"{PROMPT} [y/N]" in out  # the single-line question
     fake = full_fake()  # Discus and Shot Put already in the document
     assert guided(monkeypatch, fake, "y\nn\nn\nn\n", env=ENV) == 0
-    assert "Note:" not in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert QUALIFIER not in out and f"{PROMPT} [y/N]" in out
     fake = FakeGrist()  # the question is skipped through the flag
     argv = ("--create", "--name", "Given", "--seed-implements")
     assert guided(monkeypatch, fake, "y\nn\nn\ny\n", *argv) == 0
     out = capsys.readouterr().out
-    assert "Note:" not in out and PROMPT not in out
+    assert QUALIFIER not in out and PROMPT not in out
     fake = FakeGrist()  # demo data yes: no implements question at all
     assert guided(monkeypatch, fake, "y\nDoc\ny\ny\n") == 0
-    assert "Note:" not in capsys.readouterr().out
+    assert QUALIFIER not in capsys.readouterr().out
 
 
 def test_the_note_is_shown_for_an_existing_document_missing_those_events(monkeypatch, capsys):
     fake = full_fake()
     fake.rows["Events"] = [r for r in fake.rows["Events"] if r["fields"]["Name"] != "Discus"]
     assert guided(monkeypatch, fake, "y\nn\nn\ny\ny\n", env=ENV) == 0
-    assert f"{NOTE_TEXT}\n{PROMPT}" in capsys.readouterr().out
+    assert f"{PROMPT}\n{QUALIFIER} [y/N]" in capsys.readouterr().out
 
 
 def test_no_note_when_the_events_are_added_or_already_there(monkeypatch, capsys):

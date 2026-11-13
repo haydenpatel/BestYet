@@ -1367,17 +1367,17 @@ def guide(args: argparse.Namespace, config: Config, client_for, out, stdin) -> b
                 out, "Add default events (standard track and field list)?", stdin
             )
         if not args.seed_implements:
+            question = "Add the example implements (a starting list you can edit in Grist)?"
             names = implement_event_names()
             if not args.seed_events and any(_norm(n) not in present_events for n in names):
+                # Yes would add events that are not otherwise being added: say so, after the
+                # question and before the answer.
                 kind = "events" if len(names) > 1 else "event"
-                print(
-                    f"Note: the implements use the {_and(list(names))} {kind}, so answering yes "
-                    f"also adds {'those' if len(names) > 1 else 'that'} {kind}.",
-                    file=out,
+                print(question, file=out)
+                question = (
+                    f"This also adds the {_and(list(names))} {kind}, which the implements use."
                 )
-            args.seed_implements = _ask_yes_no(
-                out, "Add the example implements (a starting list you can edit in Grist)?", stdin
-            )
+            args.seed_implements = _ask_yes_no(out, question, stdin)
     return True
 
 
