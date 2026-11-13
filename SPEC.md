@@ -43,6 +43,7 @@ Table and column ids are case sensitive. At startup, read the schema from `GET /
 ### Athletes
 - `Name` (Text)
 - `Grade` (Choice, for example "Grade 9"): current grade. New results default to it.
+- `Division` (Choice, label "Default division"): the athlete's usual division. New results default to it.
 
 ### Events
 - `Name` (Text)
@@ -56,16 +57,16 @@ Table and column ids are case sensitive. At startup, read the schema from `GET /
 - `Location` (Text)
 
 ### Implements (lookup table)
-- `Event` (Ref to Events), `Grade` (Choice), `Weight` (Text, for example "500g", "1.5kg").
-- Maps an event and grade to the implement used for throws. Events with no implement (sprints, jumps) have no row.
-- Design note: in the original dataset weights depend only on event and grade. If a deployment needs gender or age group, extend the lookup key.
+- `Event` (Ref to Events), `Grade` (Choice), `Division` (Choice), `Weight` (Text, for example "500g", "1.500kg").
+- Maps an event, grade and division to the implement used for throws, matched exactly. Events with no implement (sprints, jumps) have no row.
+- A division is a label the user sets (the init script creates the choices `Girls`, `Boys` and `Open`; the choices are deployment data). Rows are only found for the divisions they are entered for: there is no fallback from one division to another.
 
 ### Results (one row per result)
 Writable by the app:
 - `Athlete` (Ref to Athletes), `Event` (Ref to Events), `Meet` (Ref to Meets)
 - `Mark` (Text, as typed: `2.98`, `13.45`, `2:15.30`)
 - `Place` (Int, optional)
-- `Grade` (Choice) and `Implement` (Text): leave these out of the payload for normal entry so Grist fills them in.
+- `Division` (Choice), `Grade` (Choice) and `Implement` (Text): leave these out of the payload for normal entry so Grist fills them in. Send `Division` only to override the athlete's default division for one result.
 
 Computed by Grist, read only (never write these):
 - `Value` (Numeric): `Mark` parsed to a number (seconds for times, metres for distances). Errors if `Mark` cannot be parsed.
@@ -74,8 +75,9 @@ Computed by Grist, read only (never write these):
 
 ### Trigger formulas that supply defaults
 - `Results.Grade` = `$Athlete.Grade`, recalculated when `Athlete` is set. Changing an athlete's grade later does not alter old results.
-- `Results.Implement` = lookup in `Implements` by Event and Grade, recalculated when `Event` is set.
-- Limitation: `Implement` is triggered by `Event` only. Send `Athlete` and `Event` in the same create call so both defaults resolve. A later edit to Athlete or Grade does not recompute Implement.
+- `Results.Division` = `$Athlete.Division`, recalculated when `Athlete` is set. It can be overridden per result.
+- `Results.Implement` = lookup in `Implements` by Event, Grade and Division (exact match, blank when there is no row), recalculated when `Event` or `Division` is set.
+- Limitation: `Implement` is triggered by `Event` and `Division` only. Send `Athlete` and `Event` in the same create call so all the defaults resolve. A later edit to Athlete or Grade does not recompute Implement.
 
 ### PB summary table
 `Results_summary_Athlete_Event_Implement` has one row per Athlete, Event and Implement, with `count` and `Best` (Numeric). It is part of the contract, and the app reads personal bests from it: the app never calculates them. If it is missing or renamed, the startup check fails.
@@ -111,10 +113,13 @@ return $Value == best
 
 `Results.Grade` (trigger formula, recalculate when `Athlete` changes): `$Athlete.Grade`
 
-`Results.Implement` (trigger formula, recalculate when `Event` changes):
+`Results.Division` (trigger formula, recalculate when `Athlete` changes): `$Athlete.Division`
+
+`Results.Implement` (trigger formula, recalculate when `Event` or `Division` changes):
 ```python
 g = $Grade or $Athlete.Grade
-match = Implements.lookupOne(Event=$Event, Grade=g)
+d = $Division or $Athlete.Division
+match = Implements.lookupOne(Event=$Event, Grade=g, Division=d)
 return match.Weight if match else ""
 ```
 (Do not name a variable `rec`; Grist reserves it.)
@@ -172,8 +177,8 @@ The repo must include a script, with documentation in the README, that sets up a
 Requirements:
 - Uses Grist's REST API only, with the same `GRIST_URL` and `GRIST_API_KEY` settings as the app.
 - Can create a new empty document in a given workspace (for example `--create --workspace <id-or-name> --name "..."`), or set up an existing empty document given by `GRIST_DOC_ID`.
-- Creates the tables, columns, Choice lists, Ref links, the computed and trigger formulas from "Reference formulas", and the PB summary table with its `Best` column. The summary table is created through a view section on the `Personal Bests` page, only if that page is missing; an existing page is never changed. Page names match ignoring case and surrounding spaces, so an existing `Personal bests` page counts (here, in `--check` and in the startup check). It sets `visibleCol` on the Ref columns listed under "Ref columns show names" only where it is unset, and creates no other pages or forms (the other pages are Grist's own raw-data views).
-- Optionally seeds the Events table (`--seed-events`, the default event list) and the Implements table (`--seed-implements`, the example rows). Both are opt-in, so a user can end up with empty tables. Each seed adds only the events it needs: `--seed-implements` the events its rows use (Discus and Shot Put), `--demo-data` the events its results and those implements use. Existing rows are never changed or duplicated.
+- Creates the tables, columns, Choice lists, Ref links, the computed and trigger formulas from "Reference formulas", column labels where the contract names one (`Athletes.Division`: "Default division"; the check matches on column id only), and the PB summary table with its `Best` column. The summary table is created through a view section on the `Personal Bests` page, only if that page is missing; an existing page is never changed. Page names match ignoring case and surrounding spaces, so an existing `Personal bests` page counts (here, in `--check` and in the startup check). It sets `visibleCol` on the Ref columns listed under "Ref columns show names" only where it is unset, and creates no other pages or forms (the other pages are Grist's own raw-data views).
+- Optionally seeds the Events table (`--seed-events`, the default event list) and the Implements table (`--seed-implements`, sample weights by grade and division). Both are opt-in, so a user can end up with empty tables. Each seed adds only the events it needs: `--seed-implements` the events its rows use (Discus and Shot Put), `--demo-data` the events its results and those implements use. Existing rows are never changed or duplicated.
 - Optional `--demo-data`: loads a few fictional athletes, meets and results so the app has something to show. It is a plan step like the others and also seeds the Implements and the events it needs. The demo data must be obviously fake. It only loads into a document whose Athletes, Meets and Results tables are all empty (or one the script has just created), and otherwise refuses. This protects real data without restricting what the document is called.
 - Makes no assumptions about the environment: it works on a document with any name, against any Grist server. `--create` defaults to the name "BestYet" and accepts any `--name`. Nothing in the script or the app may require a particular name or marker, so anyone can set up a fresh production document with it.
 - Idempotent: running it again on an already initialised document makes no changes and says so. It only adds what is missing and never drops, renames or overwrites anything.
@@ -187,7 +192,7 @@ The script is exercised by its own tests: initialise a fresh TEST document, then
 ## Testing
 
 - Unit tests for mark validation and Ref resolution.
-- An integration test script that creates a throwaway meet and a throwaway result, checks that `Value`, `Grade`, `Implement` and `IsPB` come back as expected, then deletes exactly what it created. Never leave test rows behind and never touch other rows.
+- An integration test script that creates a throwaway meet and a throwaway result, checks that `Value`, `Grade`, `Division`, `Implement` and `IsPB` come back as expected, then deletes exactly what it created. Never leave test rows behind and never touch other rows.
 - Safety guard (test suite only): any test that writes, deletes or loads demo data must first read the target document's name and refuse to run unless the name contains `TEST`. Integration tests run against the TEST document only, and are skipped by default in CI. This guard lives in the test fixtures and contributor tooling. The app and the init script must not depend on it, so they stay usable on any document, including a production one. Document the guard in CONTRIBUTING, not in the user-facing setup instructions.
 
 ## Packaging

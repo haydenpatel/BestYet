@@ -58,7 +58,7 @@ def _column_differences(
             deps = fields.get("recalcDeps") or []
             have = sorted(d for d in deps if isinstance(d, int))
             if fields.get("recalcWhen") != column.recalc_when or have != want:
-                names = ", ".join(column.recalc_deps)
+                names = " or ".join(column.recalc_deps)
                 out.append(f"{name} should recalculate when {names} changes")
     if column.visible_col and column.ref_table:
         want_ref = refs.get(column.ref_table, {}).get(column.visible_col)

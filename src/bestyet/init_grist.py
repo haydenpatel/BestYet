@@ -11,14 +11,14 @@ is required). ``--check`` instead reads the document (GET only), reports every d
 the contract (``bestyet.check``, also run by the app at startup) and exits non-zero on any.
 
 Seed rows are opt-in plan steps (a fresh document ends up with empty Events and Implements
-tables unless asked): the default Events with ``--seed-events``, the example Implements with
+tables unless asked): the default Events with ``--seed-events``, the sample Implements with
 ``--seed-implements`` (which also adds only the events their rows use). ``--demo-data`` adds
 fictional athletes, meets and results as the last step; it plans the Implements and only the
 events it needs, and refuses (writing nothing) unless Athletes, Meets and Results are all
 empty.
 
 The Events and Implements seeds only add rows that are missing (Events matched by Name,
-Implements by Event and Grade, ignoring case and surrounding spaces); an existing row is never
+Implements by Event, Grade and Division, ignoring case and surrounding spaces); an existing row is never
 changed or duplicated.
 
 The plan is a list of small steps, each with ``describe()`` (for the plan), ``created()`` (for
@@ -199,8 +199,12 @@ def column_payload(column: schema.Column) -> dict:
     `recalcDeps` is not part of it: Grist rejects it (and can corrupt the document) when sent
     with the new column, so it is set in a second call, see `AddColumns.apply`."""
     fields: dict = {"type": column.type}
+    if column.label:
+        fields["label"] = column.label
     if column.type == "Choice":
-        choices = column.choices if column.choices is not None else schema.DEFAULT_GRADE_CHOICES
+        choices = column.choices
+        if choices is None:
+            choices = schema.DEFAULT_CHOICES.get(column.id, ())
         fields["widgetOptions"] = json.dumps({"choices": list(choices)})
     if column.formula is not None:
         fields["isFormula"] = column.is_formula
@@ -292,9 +296,10 @@ class AddColumns(Step):
     def apply(self, client: GristClient) -> None:
         sent = [c.id for c in self.columns]
         triggers = [c for c in self.columns if c.recalc_deps]
-        refs = {i: c["fields"]["colRef"] for i, c in _refs(client, self.table).items()}
         _check_ids(sent, client.add_columns(self.table, [column_payload(c) for c in self.columns]))
         if triggers:
+            # After the add: a trigger can depend on a column created in the same step.
+            refs = {i: c["fields"]["colRef"] for i, c in _refs(client, self.table).items()}
             # A reference list is sent as ["L", ref, ...]; the column API wants it in an update.
             updates = [
                 {"id": c.id, "fields": {"recalcDeps": ["L", *(refs[d] for d in c.recalc_deps)]}}
@@ -416,13 +421,17 @@ def _missing_events(events: Sequence[Mapping]) -> tuple[tuple[str, str], ...]:
 
 def _missing_implements(
     events: Sequence[Mapping], implements: Sequence[Mapping]
-) -> tuple[tuple[str, str, str], ...]:
+) -> tuple[tuple[str, str, str, str], ...]:
     names = _event_names(events)
     have = {
-        (_norm(names.get(r["fields"].get("Event"))), _norm(r["fields"].get("Grade")))
+        (
+            _norm(names.get(r["fields"].get("Event"))),
+            _norm(r["fields"].get("Grade")),
+            _norm(r["fields"].get("Division")),
+        )
         for r in implements
     }
-    return tuple(i for i in schema.EXAMPLE_IMPLEMENTS if (_norm(i[0]), _norm(i[1])) not in have)
+    return tuple(i for i in schema.SAMPLE_IMPLEMENTS if tuple(_norm(v) for v in i[:3]) not in have)
 
 
 @dataclass(frozen=True)
@@ -459,17 +468,17 @@ class SeedEvents(Step):
 
 @dataclass(frozen=True)
 class SeedImplements(Step):
-    """Add the example Implements whose Event and Grade pair is not there yet. `add` and
+    """Add the sample Implements whose Event, Grade and Division is not there yet. `add` and
     `have`: how many the plan found missing and already there (for its wording only)."""
 
     add: int = 0
     have: int = 0
 
     def describe(self) -> str:
-        return "Add the example Implements that are missing"
+        return "Add the sample Implements that are missing"
 
     def created(self) -> str:
-        return "Added the example Implements"
+        return "Added the sample Implements"
 
     def tables(self) -> tuple[str, ...]:
         return ("Implements",)
@@ -481,10 +490,12 @@ class SeedImplements(Step):
         for i, name in _event_names(events).items():
             ids.setdefault(_norm(name), i)
         add = []
-        for event, grade, weight in rows:
+        for event, grade, division, weight in rows:
             if _norm(event) not in ids:
                 raise InitError(f"Events has no row named {event!r}; cannot add its Implements")
-            add.append({"Event": ids[_norm(event)], "Grade": grade, "Weight": weight})
+            add.append(
+                {"Event": ids[_norm(event)], "Grade": grade, "Division": division, "Weight": weight}
+            )
         if add:
             client.add("Implements", add)
 
@@ -509,7 +520,7 @@ def _require_empty(client: GristClient, tables: Collection[str], note: str = "")
 class LoadDemoData(Step):
     """Add the fictional athletes, meets and results.
 
-    Results go in with Athlete and Event in one call, so Grade and Implement resolve from
+    Results go in with Athlete and Event in one call, so Grade, Division and Implement resolve from
     their trigger formulas. Needs the Events (and Implements) it uses from the steps before.
     """
 
@@ -539,7 +550,10 @@ class LoadDemoData(Step):
         athletes = dict(
             zip(
                 (a[0] for a in schema.DEMO_ATHLETES),
-                client.add("Athletes", [{"Name": n, "Grade": g} for n, g in schema.DEMO_ATHLETES]),
+                client.add(
+                    "Athletes",
+                    [{"Name": n, "Grade": g, "Division": d} for n, g, d in schema.DEMO_ATHLETES],
+                ),
                 strict=True,
             )
         )
@@ -658,7 +672,7 @@ def build_plan(
     `summary_tables` the ids of real summary tables. `events` and `implements` are the
     existing rows of those tables (None: the table does not exist yet). Seeds are opt-in and
     each adds only what it needs: `seed_events` the whole default event list,
-    `seed_implements` the missing example Implements and only the events their rows use,
+    `seed_implements` the missing sample Implements and only the events their rows use,
     `demo_data` the demo rows and only the events they and the Implements use. `demo_data`
     adds the demo step last; the caller checks that the tables are empty.
 
@@ -707,8 +721,8 @@ def build_plan(
 
 
 def implement_event_names() -> tuple[str, ...]:
-    """The events the example Implements rows use, in order (from the schema)."""
-    return tuple(dict.fromkeys(i[0] for i in schema.EXAMPLE_IMPLEMENTS))
+    """The events the sample Implements rows use, in order (from the schema)."""
+    return tuple(dict.fromkeys(i[0] for i in schema.SAMPLE_IMPLEMENTS))
 
 
 def _needed_events(seed_events: bool, seed_implements: bool, demo_data: bool) -> tuple[str, ...]:
@@ -746,7 +760,7 @@ def _plan_seeds(
     # An Implements row of an Event that is not in the document yet counts as missing too.
     missing_implements = _missing_implements(events, implements)
     if implements_too and missing_implements:
-        total = len(schema.EXAMPLE_IMPLEMENTS)
+        total = len(schema.SAMPLE_IMPLEMENTS)
         plan.steps.append(SeedImplements(len(missing_implements), total - len(missing_implements)))
 
 
@@ -841,7 +855,7 @@ def grouped(
         elif isinstance(s, SeedEvents):
             example.append(_seed_events_text(s, past))
         elif isinstance(s, SeedImplements):
-            example.append(_seed_text("example implement", s.add, s.have, past))
+            example.append(_seed_text("sample implement", s.add, s.have, past))
         elif isinstance(s, LoadDemoData):
             example.append("Added demo data" if past else f"Add demo data: {s._counts()}")
     out["Pre-loaded data"].extend(example)
@@ -863,7 +877,7 @@ def _seed_text(noun: str, add: int, have: int, past: bool) -> str:
 def _seed_events_text(step: "SeedEvents", past: bool) -> str:
     """ "Add the 18 default events" / "Add 5 default events (13 already there)" when the full
     list is in play, otherwise the few events the other seeds need: "Add 2 events required
-    for the example implements (Discus and Shot Put)"."""
+    for the sample implements (Discus and Shot Put)"."""
     add = len(step.add_names)
     if step.names is None or len(step.names) == len(schema.EXAMPLE_EVENTS):
         return _seed_text("default event", add, step.have, past)
@@ -871,7 +885,7 @@ def _seed_events_text(step: "SeedEvents", past: bool) -> str:
     names = sorted(step.add_names, key=lambda n: first.index(n) if n in first else len(first))
     verb = "Added" if past else "Add"
     noun = "event" if add == 1 else "events"
-    reason = "the demo data and example implements" if step.for_demo else "the example implements"
+    reason = "the demo data and sample implements" if step.for_demo else "the sample implements"
     note = "" if past or step.have == 0 else f"; {step.have} already there"
     return f"{verb} {add} {noun} required for {reason} ({_and(names)}{note})"
 
@@ -1049,7 +1063,10 @@ def parse_args(argv: Sequence[str] | None, can_ask: bool = False) -> argparse.Na
     p.add_argument(
         "--seed-implements",
         action="store_true",
-        help="also add the example Implements rows, and only the events their rows use",
+        help=(
+            "also add sample implement weights, by grade and division, and the Discus and "
+            "Shot Put events if missing; only adds"
+        ),
     )
     p.add_argument(
         "--allow-existing-tables",
@@ -1063,8 +1080,8 @@ def parse_args(argv: Sequence[str] | None, can_ask: bool = False) -> argparse.Na
         "--demo-data",
         action="store_true",
         help=(
-            "also load fictional athletes, meets and results (and the Implements and "
-            "events they use); "
+            "also load fictional athletes, meets and results (and the events and "
+            "sample implements it uses); "
             "refused unless Athletes, Meets and Results are all empty"
         ),
     )
@@ -1074,6 +1091,7 @@ def parse_args(argv: Sequence[str] | None, can_ask: bool = False) -> argparse.Na
         old_doc_id="",
         settings_id=None,
         events_hint=False,
+        implements_hint=False,
         ws_resolved=None,
         ws_docs=None,
     )
@@ -1391,7 +1409,7 @@ def guide(args: argparse.Namespace, config: Config, client_for, out, stdin) -> b
         args.demo_data = _ask_yes_no(
             out,
             "Add demo data (a few fictional athletes, meets and results, with the events and "
-            "implements they use)?",
+            "sample implements they use)?",
             stdin,
         )
     if not args.demo_data:  # demo data covers the Events and Implements it needs
@@ -1400,7 +1418,7 @@ def guide(args: argparse.Namespace, config: Config, client_for, out, stdin) -> b
                 out, "Add default events (standard track and field list)?", stdin
             )
         if not args.seed_implements:
-            question = "Add the example implements (a starting list you can edit in Grist)?"
+            question = "Add sample implement weights (by grade and division)?"
             names = implement_event_names()
             if not args.seed_events and any(_norm(n) not in present_events for n in names):
                 # Yes would add events that are not otherwise being added: say so, after the
@@ -1440,16 +1458,27 @@ EVENTS_HINT = (
 )
 
 
+IMPLEMENTS_HINT = (
+    "Add implement weights by hand in the Implements table in Grist (Event, Grade, Division "
+    "and Weight); until you do, the Implement column on results stays blank."
+)
+
+
 def print_next_steps(
-    out, doc_id: str | None, old_doc_id: str, check: bool = True, events_hint: bool = False
+    out,
+    doc_id: str | None,
+    old_doc_id: str,
+    check: bool = True,
+    events_hint: bool = False,
+    implements_hint: bool = False,
 ) -> None:
     """The closing Next steps: the settings step (when the document is not the one in
-    GRIST_DOC_ID), the events hint (when the full default list was not added), then the
-    --check pointer."""
-    if not doc_id and not check and not events_hint:
+    GRIST_DOC_ID), the events hint (when the full default list was not added), the implements
+    hint (when the sample implements were not added), then the --check pointer."""
+    if not doc_id and not check and not events_hint and not implements_hint:
         return
     _section(out, "Next steps")
-    numbered = bool(doc_id) + events_hint + check > 1
+    numbered = bool(doc_id) + events_hint + implements_hint + check > 1
     n = 0
     if doc_id:
         instruction, assignment, note = settings_step(doc_id, old_doc_id)
@@ -1461,6 +1490,9 @@ def print_next_steps(
     if events_hint:
         n += 1
         print(f"  {n}. {EVENTS_HINT}" if numbered else f"  - {EVENTS_HINT}", file=out)
+    if implements_hint:
+        n += 1
+        print(f"  {n}. {IMPLEMENTS_HINT}" if numbered else f"  - {IMPLEMENTS_HINT}", file=out)
     if check:
         text = "run bestyet-init --check to confirm the document matches the contract."
         n += 1
@@ -1535,6 +1567,7 @@ def run(
             _set_up_existing(client, config, args, out)
         return
     args.events_hint = not args.seed_events
+    args.implements_hint = not (args.seed_implements or args.demo_data)
     # A new document is empty apart from that default table, so the plan is the full contract.
     plan = build_plan(
         {},
@@ -1608,6 +1641,9 @@ def _set_up_existing(client: GristClient, config: Config, args: argparse.Namespa
     events = client.records("Events") if "Events" in present else None
     implements = client.records("Implements") if "Implements" in present else None
     args.events_hint = not args.seed_events and bool(_missing_events(events or []))
+    args.implements_hint = not (args.seed_implements or args.demo_data) and bool(
+        _missing_implements(events or [], implements or [])
+    )
     if args.demo_data:
         _require_empty(client, present, ". Nothing was changed")
     plan = build_plan(
@@ -1745,7 +1781,13 @@ def _finish(
             "(listed above). Fix them in Grist, then re-run."
         )
     if applied is not None:
-        print_next_steps(out, doc_id, args.old_doc_id, events_hint=args.events_hint)
+        print_next_steps(
+            out,
+            doc_id,
+            args.old_doc_id,
+            events_hint=args.events_hint,
+            implements_hint=args.implements_hint,
+        )
 
 
 def main(

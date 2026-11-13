@@ -34,12 +34,14 @@ The goals for version 1 (see [Status and Limitations](#status-and-limitations) f
 | `--org O` | Organisation id or name, to narrow `--workspace` | No | all organisations |
 | `--name N` | Name of the new document; an existing name in the workspace is never duplicated | No | `BestYet` |
 | `--seed-events` | Also add the default events (the standard track and field list). Without it the Events table stays empty (apart from the few events `--seed-implements` or `--demo-data` need) and you add events by hand in Grist | No | off |
-| `--seed-implements` | Also add the example implements, and only the events their rows use (Discus and Shot Put) if missing | No | off |
-| `--demo-data` | Also load fictional athletes, meets and results, with the example implements and only the events they use (not the full default list); refused unless those tables are empty | No | off |
+| `--seed-implements` | Also add sample implement weights, by grade and division (edit them in Grist) | No | off |
+| `--demo-data` | Also load fictional athletes, meets and results, with the events and sample implements they use (not the full default list); refused unless those tables are empty | No | off |
 | `--allow-existing-tables` | Add to a document that has tables of its own (a blank one made in Grist has an empty `Table1`; `--create` avoids this) | No | off: refused |
 | `-y`, `--yes` | Apply without asking | Without a terminal, unless `--dry-run` | off: asks |
 | `--dry-run` | Show the plan and change nothing | No | off |
 | `--check` | Read-only (uses `GRIST_DOC_ID`): list every difference from the schema contract, or say it matches; exits non-zero on any difference. The app runs the same check at startup | No | off |
+
+A result's implement weight is looked up by event, grade and division, with an exact match; no match leaves it blank. A division is a label you set (the script creates `Girls`, `Boys` and `Open`): each athlete has a default division, and a result can override it. The sample implements are Discus and Shot Put weights for Grades 7-15, Girls and Boys. Adjust them to your own rules in Grist, and add any others by hand in the Implements table.
 
 Once the project's container image exists (a later milestone), the same command can run as a one-off in it, with the settings passed as environment variables and nothing written to disk:
 

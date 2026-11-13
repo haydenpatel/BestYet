@@ -36,6 +36,7 @@ def results_col(name: str) -> schema.Column:
         ("Results.IsPB", results_col("IsPB")),
         ("Results.Date", results_col("Date")),
         ("Results.Grade", results_col("Grade")),
+        ("Results.Division", results_col("Division")),
         ("Results.Implement", results_col("Implement")),
         ("Results_summary_Athlete_Event_Implement.Best", schema.SUMMARY.columns[0]),
     ],
@@ -47,10 +48,14 @@ def test_formula_matches_spec(label, column):
 def test_formula_kinds():
     for name in ("Value", "Date", "IsPB"):
         assert results_col(name).is_formula
-    for name, dep in (("Grade", "Athlete"), ("Implement", "Event")):
+    for name, deps in (
+        ("Grade", ("Athlete",)),
+        ("Division", ("Athlete",)),
+        ("Implement", ("Event", "Division")),
+    ):
         col = results_col(name)
         assert not col.is_formula
-        assert col.recalc_deps == (dep,)
+        assert col.recalc_deps == deps
         assert col.recalc_when == 0
 
 
@@ -115,9 +120,65 @@ def test_events_seed():
 
 def test_implements_seed_references_seed_events():
     names = {n for n, _ in schema.EXAMPLE_EVENTS}
-    for event, grade, weight in schema.EXAMPLE_IMPLEMENTS:
+    for event, grade, division, weight in schema.SAMPLE_IMPLEMENTS:
         assert event in names
-        assert grade and weight
+        assert grade and division and weight
+
+
+def test_sample_implements_cover_each_grade_and_division_once():
+    rows = schema.SAMPLE_IMPLEMENTS
+    assert len(rows) == 36
+    assert len({r[:3] for r in rows}) == 36  # no duplicate Event, Grade and Division
+    assert {r[0] for r in rows} == {"Discus", "Shot Put"}
+    assert {r[1] for r in rows} == {f"Grade {n}" for n in range(7, 16)}
+    assert {r[2] for r in rows} == {"Girls", "Boys"}  # no Open rows
+    assert {r[1] for r in rows} <= set(schema.DEFAULT_GRADE_CHOICES)
+    assert {r[2] for r in rows} <= set(schema.DEFAULT_DIVISION_CHOICES)
+    weight = {r[:3]: r[3] for r in rows}
+    assert weight["Discus", "Grade 12", "Girls"] == "750g"
+    assert weight["Discus", "Grade 12", "Boys"] == "1.000kg"
+
+
+def test_sample_implement_weights_are_pinned():
+    discus = {
+        7: ("500g", "500g"),
+        8: ("500g", "500g"),
+        9: ("500g", "500g"),
+        10: ("750g", "750g"),
+        11: ("750g", "750g"),
+        12: ("750g", "1.000kg"),
+        13: ("1.000kg", "1.000kg"),
+        14: ("1.000kg", "1.250kg"),
+        15: ("1.000kg", "1.250kg"),
+    }
+    shot = {
+        7: ("1.000kg", "1.000kg"),
+        8: ("1.500kg", "1.500kg"),
+        9: ("1.500kg", "1.500kg"),
+        10: ("2.000kg", "2.000kg"),
+        11: ("2.000kg", "3.000kg"),
+        12: ("3.000kg", "3.000kg"),
+        13: ("3.000kg", "4.000kg"),
+        14: ("3.000kg", "5.000kg"),
+        15: ("3.000kg", "5.000kg"),
+    }
+    want = {
+        (event, f"Grade {g}", div): w
+        for event, table in (("Discus", discus), ("Shot Put", shot))
+        for g, pair in table.items()
+        for div, w in zip(("Girls", "Boys"), pair, strict=True)
+    }
+    assert {r[:3]: r[3] for r in schema.SAMPLE_IMPLEMENTS} == want
+
+
+def test_division_columns_and_label():
+    for table in ("Athletes", "Implements", "Results"):
+        col = next(c for c in schema.table(table).columns if c.id == "Division")
+        assert col.type == "Choice"
+        assert col.choices is None  # deployment data
+    athletes = next(c for c in schema.table("Athletes").columns if c.id == "Division")
+    assert athletes.label == "Default division"
+    assert schema.DEFAULT_DIVISION_CHOICES == ("Girls", "Boys", "Open")
 
 
 def test_writable_and_computed_split():
@@ -132,7 +193,8 @@ def test_writable_and_computed_split():
 
 def test_default_grade_choices():
     assert schema.DEFAULT_GRADE_CHOICES[0] == "Grade 6"
-    assert schema.DEFAULT_GRADE_CHOICES[-1] == "Grade 12"
+    assert schema.DEFAULT_GRADE_CHOICES[-1] == "Grade 15"
+    assert {f"Grade {n}" for n in range(7, 16)} <= set(schema.DEFAULT_GRADE_CHOICES)
 
 
 def test_rec_not_used_in_formulas():
