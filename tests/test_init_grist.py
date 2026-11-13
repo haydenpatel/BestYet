@@ -239,7 +239,10 @@ def test_dry_run_lists_seed_steps_and_writes_nothing(capsys):
     fake.rows["Events"] = []
     assert run(fake, "--dry-run", "--seed-implements") == 0
     out = capsys.readouterr().out
-    assert f"Add the 2 default events: {and_names(implement_event_names())}" in out
+    assert (
+        f"Add 2 events required for the example implements ({and_names(implement_event_names())})"
+        in out
+    )
     assert f"Add the {len(schema.EXAMPLE_IMPLEMENTS)} example implements" in out
     assert f"Add the {len(schema.EXAMPLE_EVENTS)} default events" not in out  # not the full list
     assert fake.writes == []
@@ -924,7 +927,9 @@ def test_demo_data_on_fresh_doc(capsys):
     needed = set(implement_event_names()) | {r[1] for r in schema.DEMO_RESULTS}
     assert {r["fields"]["Name"] for r in fake.rows["Events"]} == needed  # only what it uses
     out = capsys.readouterr().out
-    assert out.index("default events") < out.index("Add demo data: 3 athletes")
+    assert out.index("events required for the demo data and example implements (") < out.index(
+        "Add demo data: 3 athletes"
+    )
 
 
 def test_demo_results_leave_computed_columns_to_grist():
@@ -1946,7 +1951,7 @@ def test_implements_yes_events_no_adds_only_the_events_they_use(monkeypatch, cap
     )  # the qualifier follows the question, before the answer
     assert out.index(QUALIFIER) < out.index("--- Plan ---")
     assert "Note:" not in out
-    assert f"Add the 2 default events: {DISCUS_SHOT}" in out
+    assert f"Add 2 events required for the example implements ({DISCUS_SHOT})" in out
     assert {r["fields"]["Name"] for r in fake.rows["Events"]} == set(implement_event_names())
     assert len(fake.rows["Implements"]) == len(schema.EXAMPLE_IMPLEMENTS)
     assert "add your events by hand" in out.lower()  # the full list is not there
@@ -2104,7 +2109,9 @@ def test_plan_counts_for_implements_and_singular_wording(capsys):
 def test_counts_come_from_the_schema_for_a_fresh_document(capsys):
     assert run(FakeGrist(), *CREATE, "--seed-implements", "--dry-run", env=ENV_NO_DOC) == 0
     out = capsys.readouterr().out
-    assert f"Add the 2 default events: {DISCUS_SHOT}" in out  # only what the implements use
+    assert (
+        f"Add 2 events required for the example implements ({DISCUS_SHOT})" in out
+    )  # only what the implements use
     assert f"Add the {len(schema.EXAMPLE_IMPLEMENTS)} example implements" in out
 
 
@@ -2118,3 +2125,30 @@ def test_an_existing_document_keeps_the_separate_plan_groups(capsys):
     del fake.tables["Results"]["Mark"]
     assert run(fake, "--dry-run") == 0
     assert "  Tables\n    - Add missing columns to Results: Mark\n" in capsys.readouterr().out
+
+
+def test_demo_data_plan_names_the_events_it_requires(capsys):
+    assert run(FakeGrist(), "--demo-data", "--dry-run") == 0
+    out = capsys.readouterr().out
+    needed = set(implement_event_names()) | {r[1] for r in schema.DEMO_RESULTS}
+    line = next(x for x in out.splitlines() if "events required for" in x)
+    assert line.strip() == (
+        f"- Add {len(needed)} events required for the demo data and example implements ("
+        + line.split("(", 1)[1]
+    )
+    assert all(n in line for n in needed) and "default events" not in out
+
+
+def test_full_list_and_demo_data_show_no_subset_line(capsys):
+    assert run(FakeGrist(), "--seed-events", "--demo-data", "--dry-run") == 0
+    out = capsys.readouterr().out
+    assert f"Add the {len(schema.EXAMPLE_EVENTS)} default events" in out
+    assert "required for" not in out
+
+
+def test_the_subset_wording_is_singular_for_one_and_counts_what_is_there(capsys):
+    fake = full_fake()
+    fake.rows["Events"] = [r for r in fake.rows["Events"] if r["fields"]["Name"] != "Discus"]
+    assert run(fake, "--seed-implements", "--dry-run") == 0
+    out = capsys.readouterr().out
+    assert "Add 1 event required for the example implements (Discus; 1 already there)" in out

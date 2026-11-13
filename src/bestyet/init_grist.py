@@ -433,6 +433,7 @@ class SeedEvents(Step):
     names: tuple[str, ...] | None = None
     add_names: tuple[str, ...] = ()
     have: int = 0
+    for_demo: bool = False  # the subset is also needed by the demo data (wording only)
 
     def describe(self) -> str:
         return "Add the default Events that are missing"
@@ -697,6 +698,7 @@ def build_plan(
             implements or [],
             _needed_events(seed_events, seed_implements, demo_data),
             seed_implements or demo_data,
+            demo_data,
         )
         if demo_data:
             plan.steps.append(LoadDemoData())
@@ -727,6 +729,7 @@ def _plan_seeds(
     implements: Sequence[Mapping],
     needed: Sequence[str],
     implements_too: bool,
+    demo: bool = False,
 ) -> None:
     """Seeds are opt-in and add only the default Events `needed` (and missing)."""
     missing_events = tuple(e for e in _missing_events(events) if e[0] in needed)
@@ -736,6 +739,7 @@ def _plan_seeds(
                 tuple(needed),
                 tuple(n for n, _ in missing_events),
                 len(needed) - len(missing_events),
+                demo,
             )
         )
     # Events added above are new, so they cannot have Implements yet: those count as missing.
@@ -856,19 +860,19 @@ def _seed_text(noun: str, add: int, have: int, past: bool) -> str:
 
 
 def _seed_events_text(step: "SeedEvents", past: bool) -> str:
-    """ "Add the 18 default events", "Add 5 default events (13 already there)" or, for the
-    few events an Implements or demo seed needs, "Add the 2 default events: Discus and Shot
-    Put"."""
+    """ "Add the 18 default events" / "Add 5 default events (13 already there)" when the full
+    list is in play, otherwise the few events the other seeds need: "Add 2 events required
+    for the example implements (Discus and Shot Put)"."""
     add = len(step.add_names)
     if step.names is None or len(step.names) == len(schema.EXAMPLE_EVENTS):
         return _seed_text("default event", add, step.have, past)
     first = implement_event_names()  # the Implements events first, as in the guided note
     names = sorted(step.add_names, key=lambda n: first.index(n) if n in first else len(first))
     verb = "Added" if past else "Add"
-    noun = "default event" if add == 1 else "default events"
-    head = f"{verb} the {add} {noun}" if step.have == 0 and add > 1 else f"{verb} {add} {noun}"
-    note = "" if past or step.have == 0 else f" ({step.have} already there)"
-    return f"{head}: {_and(names)}{note}"
+    noun = "event" if add == 1 else "events"
+    reason = "the demo data and example implements" if step.for_demo else "the example implements"
+    note = "" if past or step.have == 0 else f"; {step.have} already there"
+    return f"{verb} {add} {noun} required for {reason} ({_and(names)}{note})"
 
 
 def _the_tables(names: Sequence[str]) -> str:
