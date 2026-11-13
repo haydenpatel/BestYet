@@ -6,7 +6,7 @@ Grist calls.
 
 The trigger columns, formulas and recalc settings below are the contract, not
 decoration: the app relies on Grist to compute ``Value``, ``Date``, ``IsPB`` and
-the ``Grade`` / ``Implement`` defaults. Table and column ids are case sensitive.
+the ``Grade`` / ``Division`` / ``Implement`` defaults. Table and column ids are case sensitive.
 Formula text is stored verbatim from SPEC.md ("Reference formulas"); a test
 keeps the two in sync. Do not name a variable ``rec`` in a formula (Grist
 reserves it).
@@ -23,7 +23,8 @@ from dataclasses import dataclass
 class Column:
     """One column. ``recalc_deps`` holds column ids; Grist's column API stores column
     refs, so the init script must map ids to refs when it sends ``recalcDeps``.
-    ``visible_col`` is likewise an id, mapped to a ref for Grist's ``visibleCol``."""
+    ``visible_col`` is likewise an id, mapped to a ref for Grist's ``visibleCol``. ``label`` is
+    cosmetic: the contract (and ``--check``) match on ``id`` only."""
 
     id: str
     type: str  # Grist type: Text, Choice, Date, Int, Numeric, Bool or Ref:<Table>
@@ -34,6 +35,7 @@ class Column:
     recalc_when: int | None = None
     recalc_deps: tuple[str, ...] | None = None
     visible_col: str | None = None  # Ref columns: id of the target column shown (its name)
+    label: str | None = None  # column label the init script sets; None: Grist uses the id
 
 
 @dataclass(frozen=True)
@@ -76,9 +78,12 @@ DATE_FORMULA = "$Meet.Date"
 
 GRADE_FORMULA = "$Athlete.Grade"
 
+DIVISION_FORMULA = "$Athlete.Division"
+
 IMPLEMENT_FORMULA = """\
 g = $Grade or $Athlete.Grade
-match = Implements.lookupOne(Event=$Event, Grade=g)
+d = $Division or $Athlete.Division
+match = Implements.lookupOne(Event=$Event, Grade=g, Division=d)
 return match.Weight if match else \"\""""
 
 BEST_FORMULA = """\
@@ -91,7 +96,11 @@ EVENT_KINDS = ("Time", "Distance")
 
 # Choices are deployment data: the contract only requires Grade to be a Choice.
 # The init script uses these when it creates the column.
-DEFAULT_GRADE_CHOICES = tuple(f"Grade {n}" for n in range(6, 13))
+DEFAULT_GRADE_CHOICES = tuple(f"Grade {n}" for n in range(6, 16))
+# Divisions are likewise a label the user sets; the contract only requires a Choice column.
+DEFAULT_DIVISION_CHOICES = ("Girls", "Boys", "Open")
+# Default choices by column id, for a Choice column whose ``choices`` is None.
+DEFAULT_CHOICES = {"Grade": DEFAULT_GRADE_CHOICES, "Division": DEFAULT_DIVISION_CHOICES}
 
 _TRIGGER_NEW_OR_DEP = 0
 
@@ -101,6 +110,7 @@ TABLES = (
         (
             Column("Name", "Text"),
             Column("Grade", "Choice"),
+            Column("Division", "Choice", label="Default division"),
         ),
     ),
     Table(
@@ -123,6 +133,7 @@ TABLES = (
         (
             Column("Event", "Ref:Events", ref_table="Events", visible_col="Name"),
             Column("Grade", "Choice"),
+            Column("Division", "Choice"),
             Column("Weight", "Text"),
         ),
     ),
@@ -142,11 +153,18 @@ TABLES = (
                 recalc_deps=("Athlete",),
             ),
             Column(
+                "Division",
+                "Choice",
+                formula=DIVISION_FORMULA,
+                recalc_when=_TRIGGER_NEW_OR_DEP,
+                recalc_deps=("Athlete",),
+            ),
+            Column(
                 "Implement",
                 "Text",
                 formula=IMPLEMENT_FORMULA,
                 recalc_when=_TRIGGER_NEW_OR_DEP,
-                recalc_deps=("Event",),
+                recalc_deps=("Event", "Division"),
             ),
             Column("Value", "Numeric", formula=VALUE_FORMULA, is_formula=True),
             Column("Date", "Date", formula=DATE_FORMULA, is_formula=True),
@@ -165,9 +183,18 @@ SUMMARY = Summary(
 # Grist adds ``count`` (Int) to every summary table; the contract requires it.
 SUMMARY_REQUIRED_COLUMNS = ("count", *(c.id for c in SUMMARY.columns))
 
-# Results columns the app may write. Grade and Implement are normally left out
-# of the payload so their trigger formulas fill them in.
-WRITABLE_RESULTS_COLUMNS = ("Athlete", "Event", "Meet", "Mark", "Place", "Grade", "Implement")
+# Results columns the app may write. Grade and Implement are normally left out of the payload
+# so their trigger formulas fill them in. Division is not listed: a create call that sets
+# Athlete recomputes it, so set Division by editing the result afterwards to override the default.
+WRITABLE_RESULTS_COLUMNS = (
+    "Athlete",
+    "Event",
+    "Meet",
+    "Mark",
+    "Place",
+    "Grade",
+    "Implement",
+)
 # Computed by Grist, read only: never write these.
 COMPUTED_RESULTS_COLUMNS = ("Value", "Date", "IsPB")
 
@@ -193,21 +220,45 @@ EXAMPLE_EVENTS = (
     ("Vortex", "Distance"),
 )
 
-# Example Implements rows (optional seed): (event name, grade, weight).
-EXAMPLE_IMPLEMENTS = (
-    ("Discus", "Grade 8", "500g"),
-    ("Discus", "Grade 9", "500g"),
-    ("Shot Put", "Grade 8", "1.5kg"),
-    ("Shot Put", "Grade 9", "1.5kg"),
+# Sample Implements rows (optional seed): (event name, grade, division, weight). Sample values
+# from published rules; the owner adjusts them in Grist.
+# Built from (grade, girls, boys) per event, Grades 7-15. No Open rows.
+_SAMPLE_DISCUS = (
+    (7, "500g", "500g"),
+    (8, "500g", "500g"),
+    (9, "500g", "500g"),
+    (10, "750g", "750g"),
+    (11, "750g", "750g"),
+    (12, "750g", "1.000kg"),
+    (13, "1.000kg", "1.000kg"),
+    (14, "1.000kg", "1.250kg"),
+    (15, "1.000kg", "1.250kg"),
+)
+_SAMPLE_SHOT_PUT = (
+    (7, "1.000kg", "1.000kg"),
+    (8, "1.500kg", "1.500kg"),
+    (9, "1.500kg", "1.500kg"),
+    (10, "2.000kg", "2.000kg"),
+    (11, "2.000kg", "3.000kg"),
+    (12, "3.000kg", "3.000kg"),
+    (13, "3.000kg", "4.000kg"),
+    (14, "3.000kg", "5.000kg"),
+    (15, "3.000kg", "5.000kg"),
+)
+SAMPLE_IMPLEMENTS = tuple(
+    (event, f"Grade {grade}", division, weight)
+    for event, rows in (("Discus", _SAMPLE_DISCUS), ("Shot Put", _SAMPLE_SHOT_PUT))
+    for grade, girls, boys in rows
+    for division, weight in (("Girls", girls), ("Boys", boys))
 )
 
 # Demo data (init script `--demo-data`): obviously fictional. Events are named as in
-# EXAMPLE_EVENTS and the Discus grades have rows in EXAMPLE_IMPLEMENTS, so the demo rows
-# resolve their Implement. Dates are ISO text.
-DEMO_ATHLETES = (  # (name, grade)
-    ("Athlete A", "Grade 8"),
-    ("Athlete B", "Grade 9"),
-    ("Athlete C", "Grade 9"),
+# EXAMPLE_EVENTS and the Discus grades and divisions have rows in SAMPLE_IMPLEMENTS, so the demo
+# rows resolve their Implement. Dates are ISO text.
+DEMO_ATHLETES = (  # (name, grade, default division)
+    ("Athlete A", "Grade 8", "Girls"),
+    ("Athlete B", "Grade 9", "Boys"),
+    ("Athlete C", "Grade 9", "Girls"),
 )
 DEMO_MEETS = (  # (name, ISO date, location)
     ("Demo Meet 1", "2026-03-07", "Demo Field"),

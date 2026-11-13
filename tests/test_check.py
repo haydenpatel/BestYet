@@ -48,6 +48,13 @@ def test_every_difference_is_reported():
     assert len(found) == 4
 
 
+def test_missing_division_column_is_named_and_labels_are_not_checked():
+    fake = initialised()
+    del fake.tables["Athletes"]["Division"]
+    fake.tables["Results"]["Division"]["label"] = "Something else"
+    assert differences(fake) == ["Athletes: column 'Division' is missing"]
+
+
 def test_missing_table_does_not_also_report_its_columns():
     fake = initialised()
     del fake.tables["Implements"]
@@ -138,7 +145,7 @@ def test_formula_and_trigger_settings_are_checked():
     assert "Results.Value has no formula" in found
     assert "Results.IsPB should be a formula column" in found
     assert "Results.Grade should be a trigger-formula column" in found
-    assert "Results.Implement should recalculate when Event changes" in found
+    assert "Results.Implement should recalculate when Event or Division changes" in found
     assert "Results.Date has type Any, contract says Date" in found
 
 

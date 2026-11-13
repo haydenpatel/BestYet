@@ -142,10 +142,15 @@ def test_seed_implements_resolves_event_ids():
     assert run(fake, "--seed-implements") == 0
     ids = {r["fields"]["Name"]: r["id"] for r in fake.rows["Events"]}
     got = [
-        (r["fields"]["Event"], r["fields"]["Grade"], r["fields"]["Weight"])
+        (
+            r["fields"]["Event"],
+            r["fields"]["Grade"],
+            r["fields"]["Division"],
+            r["fields"]["Weight"],
+        )
         for r in fake.rows["Implements"]
     ]
-    assert got == [(ids[e], g, w) for e, g, w in schema.EXAMPLE_IMPLEMENTS]
+    assert got == [(ids[e], g, d, w) for e, g, d, w in schema.SAMPLE_IMPLEMENTS]
 
 
 def test_seeding_twice_changes_nothing(capsys):
@@ -166,8 +171,11 @@ def test_existing_rows_are_kept_and_not_duplicated(capsys):
         {"id": 9, "fields": {"Name": "My Event", "Kind": "Time"}},
     ]
     fake.rows["Implements"] = [
-        {"id": 1, "fields": {"Event": 7, "Grade": "Grade 8", "Weight": "999g"}},
-        {"id": 2, "fields": {"Event": 9, "Grade": "Grade 9", "Weight": "1kg"}},
+        {
+            "id": 1,
+            "fields": {"Event": 7, "Grade": "Grade 8", "Division": "Girls", "Weight": "999g"},
+        },
+        {"id": 2, "fields": {"Event": 9, "Grade": "Grade 9", "Division": "Boys", "Weight": "1kg"}},
     ]
     assert run(fake, "--seed-implements") == 0
     names = event_names(fake)
@@ -175,12 +183,14 @@ def test_existing_rows_are_kept_and_not_duplicated(capsys):
     assert names == ["Discus", "My Event", "Shot Put"]  # only the missing event it needs
     assert fake.rows["Events"][0]["fields"]["Kind"] == "Time"
     imps = [
-        (r["fields"]["Event"], r["fields"]["Grade"], r["fields"]["Weight"])
+        (r["fields"]["Event"], r["fields"]["Grade"], r["fields"]["Division"], r["fields"]["Weight"])
         for r in fake.rows["Implements"]
     ]
-    assert imps[:2] == [(7, "Grade 8", "999g"), (9, "Grade 9", "1kg")]
-    assert (7, "Grade 8", "500g") not in imps and (7, "Grade 9", "500g") in imps
-    assert len(imps) == 2 + len(schema.EXAMPLE_IMPLEMENTS) - 1
+    assert imps[:2] == [(7, "Grade 8", "Girls", "999g"), (9, "Grade 9", "Boys", "1kg")]
+    # Discus Grade 8 Girls exists (Event, Grade and Division match): not added again. The same
+    # event and grade in another division is a different row and is added.
+    assert (7, "Grade 8", "Girls", "500g") not in imps and (7, "Grade 8", "Boys", "500g") in imps
+    assert len(imps) == 2 + len(schema.SAMPLE_IMPLEMENTS) - 1
 
 
 def test_case_and_space_variants_are_not_re_added():
@@ -190,15 +200,23 @@ def test_case_and_space_variants_are_not_re_added():
         {"id": i, "fields": {"Name": n, "Kind": "Time"}} for i, n in enumerate(variants, 1)
     ]
     fake.rows["Implements"] = [
-        {"id": 1, "fields": {"Event": 1, "Grade": "grade 8 ", "Weight": "x"}},
-        {"id": 2, "fields": {"Event": 3, "Grade": "GRADE 9", "Weight": "y"}},
+        {"id": 1, "fields": {"Event": 1, "Grade": "Grade 8", "Division": "Girls", "Weight": "x"}},
+        {"id": 2, "fields": {"Event": 3, "Grade": "GRADE 9", "Division": "BOYS ", "Weight": "y"}},
     ]
     before = json.dumps(fake.rows)
     assert run(fake, "--seed-implements") == 0
     assert len(fake.rows["Events"]) == 3  # Discus and Shot Put are there: no events added
     ids = {r["fields"]["Name"]: r["id"] for r in fake.rows["Events"]}
-    new = [(r["fields"]["Event"], r["fields"]["Grade"]) for r in fake.rows["Implements"][2:]]
-    assert new == [(1, "Grade 9"), (3, "Grade 8")]  # Discus 9 and Shot Put 8 only
+    new = [
+        (r["fields"]["Event"], r["fields"]["Grade"], r["fields"]["Division"])
+        for r in fake.rows["Implements"][2:]
+    ]
+    # The Event is matched by name ignoring case and spaces; Grade and Division exactly, as the
+    # Implement formula does: "GRADE 9" and "BOYS " do not count as present.
+    assert len(new) == len(schema.SAMPLE_IMPLEMENTS) - 1
+    assert (1, "Grade 8", "Girls") not in new
+    assert (3, "Grade 9", "Boys") in new
+    assert (1, "Grade 8", "Boys") in new and (3, "Grade 9", "Girls") in new
     assert json.loads(before)["Events"] == fake.rows["Events"][:3]
     assert ids["discus "] == 1
 
@@ -216,7 +234,7 @@ def test_missing_events_table_with_seed_implements_plans_both_in_order():
     fake = FakeGrist()
     assert run(fake, "--seed-implements") == 0  # tables, then Events rows, then Implements
     assert {r["fields"]["Name"] for r in fake.rows["Events"]} == set(implement_event_names())
-    assert len(fake.rows["Implements"]) == len(schema.EXAMPLE_IMPLEMENTS)
+    assert len(fake.rows["Implements"]) == len(schema.SAMPLE_IMPLEMENTS)
 
 
 def test_implements_not_seeded_without_the_flag():
@@ -240,10 +258,10 @@ def test_dry_run_lists_seed_steps_and_writes_nothing(capsys):
     assert run(fake, "--dry-run", "--seed-implements") == 0
     out = capsys.readouterr().out
     assert (
-        f"Add 2 events required for the example implements ({and_names(implement_event_names())})"
+        f"Add 2 events required for the sample implements ({and_names(implement_event_names())})"
         in out
     )
-    assert f"Add the {len(schema.EXAMPLE_IMPLEMENTS)} example implements" in out
+    assert f"Add the {len(schema.SAMPLE_IMPLEMENTS)} sample implements" in out
     assert f"Add the {len(schema.EXAMPLE_EVENTS)} default events" not in out  # not the full list
     assert fake.writes == []
 
@@ -270,13 +288,21 @@ def test_formula_and_trigger_columns_carry_their_settings():
             [c.id for c in schema.table("Results").columns].index(name)
         ]
         assert results[name]["isFormula"] is True and results[name]["formula"] == col.formula
-    grade, implement = results["Grade"], results["Implement"]
+    grade, division = results["Grade"], results["Division"]
+    implement = results["Implement"]
     assert grade["isFormula"] is False and grade["formula"] == schema.GRADE_FORMULA
+    assert division["isFormula"] is False and division["formula"] == schema.DIVISION_FORMULA
     assert implement["isFormula"] is False and implement["formula"] == schema.IMPLEMENT_FORMULA
     # Triggers fire on new records or a dependency change, and name the column by its ref.
-    assert grade["recalcWhen"] == implement["recalcWhen"] == 0
+    assert grade["recalcWhen"] == division["recalcWhen"] == implement["recalcWhen"] == 0
     assert grade["recalcDeps"] == ["L", fake.refs[("Results", "Athlete")]]
-    assert implement["recalcDeps"] == ["L", fake.refs[("Results", "Event")]]
+    assert division["recalcDeps"] == ["L", fake.refs[("Results", "Athlete")]]
+    # Implement depends on a column created in the same step as itself.
+    assert implement["recalcDeps"] == [
+        "L",
+        fake.refs[("Results", "Event")],
+        fake.refs[("Results", "Division")],
+    ]
 
 
 def test_summary_table_is_created_through_a_page_and_has_best():
@@ -526,7 +552,14 @@ def test_plan_creates_plain_columns_first_then_formulas():
     later = next(
         s for s in steps if getattr(s, "table", None) == "Results" and hasattr(s, "columns")
     )
-    assert [c.id for c in later.columns] == ["Grade", "Implement", "Value", "Date", "IsPB"]
+    assert [c.id for c in later.columns] == [
+        "Grade",
+        "Division",
+        "Implement",
+        "Value",
+        "Date",
+        "IsPB",
+    ]
     assert steps.index(results) < steps.index(later)
     assert column_payload(schema.table("Meets").columns[1]) == {
         "id": "Date",
@@ -552,7 +585,7 @@ def test_case_only_column_conflict_warns_and_fails(capsys):
     assert "'name'" in captured.out and "'Name'" in captured.out
     assert "Fix them in Grist" in captured.err
     assert fake.writes == []
-    assert set(fake.tables["Athletes"]) == {"name", "Grade"}
+    assert set(fake.tables["Athletes"]) == {"name", "Grade", "Division"}
 
 
 def test_case_only_table_conflict_warns_and_fails(capsys):
@@ -888,7 +921,7 @@ def test_failed_trigger_update_names_the_columns(capsys):
     fake.transport = httpx.MockTransport(handle)
     assert run(fake) == 1
     err = capsys.readouterr().err
-    assert "Results.Grade, Results.Implement" in err and "re-run leaves" in err
+    assert "Results.Grade, Results.Division, Results.Implement" in err and "re-run leaves" in err
 
 
 # --demo-data
@@ -909,7 +942,7 @@ def demo_rows(fake):
 
 
 def test_demo_data_is_obviously_fake_and_valid():
-    names = {n for n, _ in schema.DEMO_ATHLETES}
+    names = {n for n, _, _ in schema.DEMO_ATHLETES}
     assert all(n.startswith("Athlete ") for n in names)
     assert all(m[0].startswith("Demo ") for m in schema.DEMO_MEETS)
     events = {n for n, _ in schema.EXAMPLE_EVENTS}
@@ -923,7 +956,10 @@ def test_demo_data_is_obviously_fake_and_valid():
     keys = [(a, e) for a, e, *_ in schema.DEMO_RESULTS]
     assert any(keys.count(k) > 1 for k in keys)
     implemented = {
-        e for e, g, _ in schema.EXAMPLE_IMPLEMENTS for a, ag in schema.DEMO_ATHLETES if g == ag
+        e
+        for e, g, d, _ in schema.SAMPLE_IMPLEMENTS
+        for _, ag, ad in schema.DEMO_ATHLETES
+        if (g, d) == (ag, ad)
     }
     assert any(e in implemented for _, e, *_ in schema.DEMO_RESULTS)
 
@@ -932,15 +968,15 @@ def test_demo_data_on_fresh_doc(capsys):
     fake = FakeGrist()
     assert run(fake, "--demo-data") == 0
     assert [a["fields"] for a in fake.rows["Athletes"]] == [
-        {"Name": n, "Grade": g} for n, g in schema.DEMO_ATHLETES
+        {"Name": n, "Grade": g, "Division": d} for n, g, d in schema.DEMO_ATHLETES
     ]
     assert [m["fields"]["Name"] for m in fake.rows["Meets"]] == [m[0] for m in schema.DEMO_MEETS]
     assert demo_rows(fake) == [(a, e, m, k) for a, e, m, k, _ in schema.DEMO_RESULTS]
-    assert len(fake.rows["Implements"]) == len(schema.EXAMPLE_IMPLEMENTS)  # seeded as needed
+    assert len(fake.rows["Implements"]) == len(schema.SAMPLE_IMPLEMENTS)  # seeded as needed
     needed = set(implement_event_names()) | {r[1] for r in schema.DEMO_RESULTS}
     assert {r["fields"]["Name"] for r in fake.rows["Events"]} == needed  # only what it uses
     out = capsys.readouterr().out
-    assert out.index("events required for the demo data and example implements (") < out.index(
+    assert out.index("events required for the demo data and sample implements (") < out.index(
         "Add demo data: 3 athletes"
     )
 
@@ -1177,7 +1213,7 @@ def test_create_ends_with_a_short_done_message_and_next_steps(capsys):
     )
     assert "and pre-loaded data." in done and "Needs attention" not in done
     assert "\n     GRIST_DOC_ID=NEWDOC\n" in done  # on a line of its own
-    assert done.index("GRIST_DOC_ID=NEWDOC") < done.index("2. Then run bestyet-init --check")
+    assert done.index("GRIST_DOC_ID=NEWDOC") < done.index("3. Then run bestyet-init --check")
     assert "does not change your settings" in done
     for part in ("Setting up", "Plan", "Next steps"):
         assert f"--- {part} ---" in out
@@ -1190,7 +1226,8 @@ def test_existing_document_done_message_says_what_was_added(capsys):
     assert run(fake) == 0
     out = capsys.readouterr().out
     assert "Done. Added the table Meets." in out
-    assert "GRIST_DOC_ID" not in out and "\n  - Run bestyet-init --check" in out
+    assert "GRIST_DOC_ID" not in out and "\n  2. Then run bestyet-init --check" in out
+    assert "Add implement weights by hand" in out
 
 
 def test_columns_added_to_an_existing_table_are_named(capsys):
@@ -1347,7 +1384,7 @@ def test_guided_new_document(monkeypatch, capsys):
     assert guided(monkeypatch, fake, answers) == 0
     out = capsys.readouterr().out
     assert fake.created_docs == [(10, "My Doc")]
-    assert len(fake.rows["Implements"]) == len(schema.EXAMPLE_IMPLEMENTS)
+    assert len(fake.rows["Implements"]) == len(schema.SAMPLE_IMPLEMENTS)
     assert len(fake.rows["Events"]) == len(schema.EXAMPLE_EVENTS)
     assert "Athletes" not in fake.rows
     assert "Use workspace 'Work'? [Y/n]" in out and "(Org One)" not in out
@@ -1368,7 +1405,7 @@ def test_guided_default_name_and_demo_data(monkeypatch):
     assert guided(monkeypatch, fake, "y\n\ny\ny\n") == 0
     assert fake.created_docs == [(10, "BestYet")]
     assert len(fake.rows["Results"]) == len(schema.DEMO_RESULTS)
-    assert len(fake.rows["Implements"]) == len(schema.EXAMPLE_IMPLEMENTS)  # demo needs them
+    assert len(fake.rows["Implements"]) == len(schema.SAMPLE_IMPLEMENTS)  # demo needs them
 
 
 def test_guided_existing_document(monkeypatch, capsys):
@@ -1386,7 +1423,7 @@ def test_guided_demo_is_not_offered_when_the_tables_have_rows(monkeypatch, capsy
         guided(monkeypatch, fake, "y\nn\nn\n", env=ENV) == 0
     )  # existing, no implements; then nothing to do
     out = capsys.readouterr().out
-    assert "Add demo data" not in out and "example implements" in out
+    assert "Add demo data" not in out and "sample implement weights" in out
 
 
 def test_guided_bad_numbers_are_asked_again(monkeypatch, capsys):
@@ -1444,7 +1481,7 @@ def test_guided_flags_skip_their_questions(monkeypatch, capsys):
     assert guided(monkeypatch, fake, "y\nn\nn\ny\n", *argv) == 0  # workspace, demo, events, apply
     out = capsys.readouterr().out
     assert "Use workspace 'Work'?" in out and "Name for the new" not in out
-    assert "Add the example implements" not in out and "Add demo data" in out
+    assert "Add sample implement weights" not in out and "Add demo data" in out
     assert "Add default events" in out  # the events question stays separate
     assert fake.created_docs == [(10, "Given")]
 
@@ -1736,7 +1773,7 @@ def test_guided_existing_document_with_other_tables_asks_up_front(monkeypatch, c
     assert guided(monkeypatch, fake, "y\ny\nn\nn\nn\ny\n", env=ENV) == 0
     out = capsys.readouterr().out
     assert "not part of BestYet (Notes)" in out and out.index("Notes") < out.index(
-        "example implements"
+        "sample implements"
     )
     assert "Meets" in fake.tables
     fake = full_fake({**full_tables(), "Notes": {"A": {"type": "Text"}}})
@@ -1850,7 +1887,7 @@ def test_a_document_picked_from_the_list_gets_the_settings_step(monkeypatch, cap
     assert guided(monkeypatch, fake, "n\ny\n2\nn\nn\nn\ny\n", env=ENV) == 0
     out = capsys.readouterr().out
     assert settings_step_in(out, "DOC1") and "currently points at a different document" in out
-    assert "keep using that other document" in out and "2. Then run bestyet-init --check" in out
+    assert "keep using that other document" in out and "3. Then run bestyet-init --check" in out
 
 
 def test_a_picked_document_with_no_grist_doc_id_set_gets_an_add_line(monkeypatch, capsys):
@@ -1878,7 +1915,7 @@ def test_the_document_in_grist_doc_id_needs_no_settings_step(monkeypatch, capsys
     assert guided(monkeypatch, fake, "y\nn\nn\nn\ny\n", env=ENV) == 0  # yes: that document
     out = capsys.readouterr().out
     assert "GRIST_DOC_ID=" not in out and "Update GRIST_DOC_ID" not in out
-    assert "- Run bestyet-init --check" in out
+    assert "2. Then run bestyet-init --check" in out
     fake = full_fake()
     fake.workspaces = workspace_with("Alpha")
     env = {**ENV, "GRIST_DOC_ID": "DOC0"}  # no, then pick the very same document from the list
@@ -1952,10 +1989,13 @@ def test_demo_data_is_asked_first_and_yes_skips_the_other_questions(monkeypatch,
     assert guided(monkeypatch, fake, "y\nDoc\ny\ny\n") == 0  # workspace, name, demo yes, apply
     out = capsys.readouterr().out
     assert "Add demo data" in out and "Add default events" not in out
-    assert "Add the example implements" not in out
+    assert "Add sample implement weights" not in out
     assert "This also adds" not in out  # demo data has its own plan lines
-    assert "Add the 4 example implements" in out and "Add demo data: 3 athletes" in out
-    assert len(fake.rows["Implements"]) == len(schema.EXAMPLE_IMPLEMENTS)
+    assert (
+        f"Add the {len(schema.SAMPLE_IMPLEMENTS)} sample implements" in out
+        and "Add demo data: 3 athletes" in out
+    )
+    assert len(fake.rows["Implements"]) == len(schema.SAMPLE_IMPLEMENTS)
 
 
 def test_all_no_leaves_the_tables_empty_and_hints_to_add_events(monkeypatch, capsys):
@@ -1963,7 +2003,7 @@ def test_all_no_leaves_the_tables_empty_and_hints_to_add_events(monkeypatch, cap
     assert guided(monkeypatch, fake, "y\nDoc\nn\nn\nn\ny\n") == 0
     out = capsys.readouterr().out
     assert "Add default events (standard track and field list)? [y/N]" in out
-    assert "Add the example implements (a starting list you can edit in Grist)?\n" in out
+    assert "Add sample implement weights (by grade and division)?\n" in out
     assert QUALIFIER in out  # events no and missing: the qualifier line follows
     assert "Pre-loaded data" not in out and "pre-loaded data" not in out
     assert "with 5 tables and the 'Personal Bests' page." in out
@@ -1973,7 +2013,7 @@ def test_all_no_leaves_the_tables_empty_and_hints_to_add_events(monkeypatch, cap
 
 
 QUALIFIER = f"This also adds the {DISCUS_SHOT} events, which the implements use."
-PROMPT = "Add the example implements (a starting list you can edit in Grist)?"
+PROMPT = "Add sample implement weights (by grade and division)?"
 
 
 def test_implements_yes_events_no_adds_only_the_events_they_use(monkeypatch, capsys):
@@ -1985,9 +2025,9 @@ def test_implements_yes_events_no_adds_only_the_events_they_use(monkeypatch, cap
     )  # the qualifier follows the question, before the answer
     assert out.index(QUALIFIER) < out.index("--- Plan ---")
     assert "Note:" not in out
-    assert f"Add 2 events required for the example implements ({DISCUS_SHOT})" in out
+    assert f"Add 2 events required for the sample implements ({DISCUS_SHOT})" in out
     assert {r["fields"]["Name"] for r in fake.rows["Events"]} == set(implement_event_names())
-    assert len(fake.rows["Implements"]) == len(schema.EXAMPLE_IMPLEMENTS)
+    assert len(fake.rows["Implements"]) == len(schema.SAMPLE_IMPLEMENTS)
     assert "add your events by hand" in out.lower()  # the full list is not there
 
 
@@ -2034,7 +2074,7 @@ def test_events_yes_implements_no_adds_only_the_events(monkeypatch, capsys):
     assert guided(monkeypatch, fake, "y\nDoc\nn\ny\nn\ny\n") == 0
     out = capsys.readouterr().out
     assert f"    - Add the {len(schema.EXAMPLE_EVENTS)} default events\n" in out
-    assert "example implements\n" not in out.split("--- Plan ---")[1]
+    assert "sample implements\n" not in out.split("--- Plan ---")[1]
     assert len(fake.rows["Events"]) == len(schema.EXAMPLE_EVENTS)
     assert not fake.rows.get("Implements")
 
@@ -2045,7 +2085,7 @@ def test_the_questions_are_always_asked_when_demo_data_is_declined(monkeypatch, 
     assert guided(monkeypatch, fake, "y\nn\nn\n", env=ENV) == 0
     out = capsys.readouterr().out
     assert "Add demo data" not in out
-    assert "Add default events" in out and "Add the example implements" in out
+    assert "Add default events" in out and "Add sample implement weights" in out
 
 
 def test_seed_implements_adds_only_the_missing_events_it_needs(capsys):
@@ -2132,21 +2172,21 @@ def test_plan_counts_for_implements_and_singular_wording(capsys):
     fake = full_fake()
     names = {r["fields"]["Name"]: r["id"] for r in fake.rows["Events"]}
     fake.rows["Implements"] = [
-        {"id": i, "fields": {"Event": names[e], "Grade": g, "Weight": w}}
-        for i, (e, g, w) in enumerate(schema.EXAMPLE_IMPLEMENTS[:-1], 1)
+        {"id": i, "fields": {"Event": names[e], "Grade": g, "Division": d, "Weight": w}}
+        for i, (e, g, d, w) in enumerate(schema.SAMPLE_IMPLEMENTS[:-1], 1)
     ]
-    total = len(schema.EXAMPLE_IMPLEMENTS)
+    total = len(schema.SAMPLE_IMPLEMENTS)
     assert run(fake, "--seed-implements", "--dry-run") == 0
-    assert f"Add 1 example implement ({total - 1} already there)" in capsys.readouterr().out
+    assert f"Add 1 sample implement ({total - 1} already there)" in capsys.readouterr().out
 
 
 def test_counts_come_from_the_schema_for_a_fresh_document(capsys):
     assert run(FakeGrist(), *CREATE, "--seed-implements", "--dry-run", env=ENV_NO_DOC) == 0
     out = capsys.readouterr().out
     assert (
-        f"Add 2 events required for the example implements ({DISCUS_SHOT})" in out
+        f"Add 2 events required for the sample implements ({DISCUS_SHOT})" in out
     )  # only what the implements use
-    assert f"Add the {len(schema.EXAMPLE_IMPLEMENTS)} example implements" in out
+    assert f"Add the {len(schema.SAMPLE_IMPLEMENTS)} sample implements" in out
 
 
 def test_an_existing_document_keeps_the_separate_plan_groups(capsys):
@@ -2167,7 +2207,7 @@ def test_demo_data_plan_names_the_events_it_requires(capsys):
     needed = set(implement_event_names()) | {r[1] for r in schema.DEMO_RESULTS}
     line = next(x for x in out.splitlines() if "events required for" in x)
     assert line.strip() == (
-        f"- Add {len(needed)} events required for the demo data and example implements ("
+        f"- Add {len(needed)} events required for the demo data and sample implements ("
         + line.split("(", 1)[1]
     )
     assert all(n in line for n in needed) and "default events" not in out
@@ -2185,7 +2225,7 @@ def test_the_subset_wording_is_singular_for_one_and_counts_what_is_there(capsys)
     fake.rows["Events"] = [r for r in fake.rows["Events"] if r["fields"]["Name"] != "Discus"]
     assert run(fake, "--seed-implements", "--dry-run") == 0
     out = capsys.readouterr().out
-    assert "Add 1 event required for the example implements (Discus; 1 already there)" in out
+    assert "Add 1 event required for the sample implements (Discus; 1 already there)" in out
 
 
 # Review fixes.
@@ -2214,8 +2254,8 @@ def test_seed_implements_skips_the_implements_step_when_all_are_there(capsys):
     fake = full_fake()
     names = {r["fields"]["Name"]: r["id"] for r in fake.rows["Events"]}
     fake.rows["Implements"] = [
-        {"id": i, "fields": {"Event": names[e], "Grade": g, "Weight": w}}
-        for i, (e, g, w) in enumerate(schema.EXAMPLE_IMPLEMENTS, 1)
+        {"id": i, "fields": {"Event": names[e], "Grade": g, "Division": d, "Weight": w}}
+        for i, (e, g, d, w) in enumerate(schema.SAMPLE_IMPLEMENTS, 1)
     ]
     fake.rows["Events"] = [
         r for r in fake.rows["Events"] if r["fields"]["Name"] not in ("100m", "800m")
@@ -2223,7 +2263,7 @@ def test_seed_implements_skips_the_implements_step_when_all_are_there(capsys):
     assert run(fake, "--demo-data", "--dry-run") == 0
     out = capsys.readouterr().out
     lines = [x for x in out.splitlines() if "implement" in x and "events required" not in x]
-    assert lines == []  # no "Add 0 example implements" line: nothing to add there
+    assert lines == []  # no "Add 0 sample implements" line: nothing to add there
     assert "Add demo data" in out
 
 
@@ -2235,7 +2275,7 @@ def test_with_yes_or_dry_run_only_the_missing_value_is_asked(monkeypatch, capsys
     out = capsys.readouterr().out
     assert "Use workspace 'Work'?" in out and "Name for the new document" in out
     assert "Add demo data" not in out and "Add default events" not in out
-    assert "Add the example implements" not in out
+    assert "Add sample implement weights" not in out
     assert "Pre-loaded data" not in out and "Example" not in out
     if flag == "--yes":
         assert fake.created_docs == [(10, "Doc")]
@@ -2254,3 +2294,38 @@ def test_check_rejects_name_like_the_other_write_flags(capsys):
     with pytest.raises(SystemExit):
         main(["--check", "--name", "X"], ENV, FakeGrist().transport)
     assert "--name" in capsys.readouterr().err
+
+
+HINT = "Add implement weights by hand"
+
+
+def test_implements_hint_on_a_new_document_only_without_the_sample_implements(capsys):
+    assert run(FakeGrist(), *CREATE, "--seed-events", env=ENV_NO_DOC) == 0
+    assert HINT in capsys.readouterr().out
+    for flag in ("--seed-implements", "--demo-data"):
+        assert run(FakeGrist(), *CREATE, flag, env=ENV_NO_DOC) == 0
+        assert HINT not in capsys.readouterr().out
+
+
+def test_implements_hint_on_an_existing_document_depends_on_having_rows(capsys):
+    fake = full_fake()
+    del fake.tables["Meets"]  # something to do, so the next steps are printed
+    assert run(fake) == 0
+    assert HINT in capsys.readouterr().out  # no Implements rows at all
+    fake = full_fake()
+    del fake.tables["Meets"]
+    fake.rows["Implements"] = [{"id": 1, "fields": {"Event": 1, "Grade": "Grade 8", "Weight": "x"}}]
+    assert run(fake) == 0  # the user's own weights: no hint, whatever samples are missing
+    assert HINT not in capsys.readouterr().out
+    fake = full_fake()
+    del fake.tables["Meets"]
+    assert run(fake, "--seed-implements") == 0
+    assert HINT not in capsys.readouterr().out
+
+
+def test_the_default_division_label_is_sent_for_athletes_only():
+    fake = FakeGrist()
+    assert run(fake, *CREATE, env=ENV_NO_DOC) == 0
+    assert fake.tables["Athletes"]["Division"]["label"] == "Default division"
+    assert "label" not in fake.tables["Results"]["Division"]
+    assert "label" not in fake.tables["Implements"]["Division"]
