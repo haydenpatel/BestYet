@@ -428,7 +428,7 @@ def test_create_dry_run_creates_nothing(capsys):
     fake = FakeGrist()
     assert run(fake, "--create", "--workspace", "Work", "--dry-run", yes=False) == 0
     assert fake.created_docs == [] and fake.writes == []
-    assert "Create 'BestYet' in workspace" in capsys.readouterr().out
+    assert "New document 'BestYet' in workspace" in capsys.readouterr().out
 
 
 def test_workspace_ambiguous_and_org_narrowing(capsys):
@@ -766,7 +766,7 @@ def test_plan_is_printed_before_the_first_write(capsys):
     assert run(fake, *CREATE, env=ENV_NO_DOC) == 0
     before = seen[0]
     assert "--- Plan ---" in before
-    assert "Create 'BestYet' in workspace 'Work'" in before
+    assert "New document 'BestYet' in workspace 'Work'" in before
     assert "Table1" not in before  # behind the scenes: not part of the plan
     assert all(t.id in before for t in schema.TABLES)
     assert "Summary" not in before and "Created document" not in before
@@ -836,7 +836,7 @@ def test_dry_run_and_nothing_to_do_never_prompt(monkeypatch, capsys):
     out = capsys.readouterr().out
     assert "--- Plan ---" in out and "Apply these changes" not in out and fake.writes == []
     assert run(fake, *CREATE, "--dry-run", env=ENV_NO_DOC, yes=False) == 0
-    assert "Create 'BestYet'" in capsys.readouterr().out
+    assert "New document 'BestYet'" in capsys.readouterr().out
     assert fake.created_docs == [] and fake.writes == []
     done = full_fake()
     assert run(done, yes=False) == 0
@@ -1274,8 +1274,10 @@ def test_plan_is_grouped_in_plain_words(capsys):
         for line in out.splitlines()
         if line.startswith("  ") and not line.startswith("    ")
     ]
-    assert headings == ["Document", "Tables", "Personal bests", "Pre-loaded data"]
-    assert "Create 'BestYet' in workspace 'Work'" in out
+    assert headings == ["New document 'BestYet' in workspace 'Work'", "Pre-loaded data"]
+    assert "    - Tables: Athletes, Events, Meets, Implements, Results\n" in out
+    assert "    - A 'Personal bests' page showing each athlete's best per event\n" in out
+    assert "Create 'BestYet'" not in out
     assert "showing each athlete's best per event" in out
     assert "Add demo data: 3 athletes, 2 meets, 7 results\n" in out
     assert "only if those tables" not in out
@@ -1331,7 +1333,7 @@ def test_guided_new_document(monkeypatch, capsys):
     assert len(fake.rows["Events"]) == len(schema.EXAMPLE_EVENTS)
     assert "Athletes" not in fake.rows
     assert "Use workspace 'Work'? [Y/n]" in out and "(Org One)" not in out
-    assert "Create 'My Doc' in workspace 'Work'" in out and "GRIST_DOC_ID=NEWDOC" in out
+    assert "New document 'My Doc' in workspace 'Work'" in out and "GRIST_DOC_ID=NEWDOC" in out
     assert KEY not in out
 
 
@@ -1634,7 +1636,7 @@ def test_dry_run_in_a_terminal_shows_the_plan_for_using_the_existing_document(mo
     assert run(fake, *CREATE, "--dry-run", env=ENV_NO_DOC, yes=False) == 0
     out = capsys.readouterr().out
     assert "already exists in workspace 'Work'" in out and "asks whether to use it" in out
-    assert "Create 'BestYet'" not in out and "--- Plan ---" in out
+    assert "New document 'BestYet'" not in out and "--- Plan ---" in out
     assert fake.created_docs == [] and fake.writes == []
 
 
@@ -2102,3 +2104,15 @@ def test_counts_come_from_the_schema_for_a_fresh_document(capsys):
     out = capsys.readouterr().out
     assert f"Add the 2 default events: {DISCUS_SHOT}" in out  # only what the implements use
     assert f"Add the {len(schema.EXAMPLE_IMPLEMENTS)} example implements" in out
+
+
+def test_an_existing_document_keeps_the_separate_plan_groups(capsys):
+    fake = full_fake()
+    del fake.tables["Meets"]
+    assert run(fake, "--dry-run") == 0
+    out = capsys.readouterr().out
+    assert "  Tables\n    - Create Meets\n" in out and "New document" not in out
+    fake = full_fake()
+    del fake.tables["Results"]["Mark"]
+    assert run(fake, "--dry-run") == 0
+    assert "  Tables\n    - Add missing columns to Results: Mark\n" in capsys.readouterr().out

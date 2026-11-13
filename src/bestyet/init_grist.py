@@ -1496,7 +1496,7 @@ def run(
 
     with _explaining(config, "workspace"), client_for("") as admin:
         workspace_id, workspace_label = resolve_workspace_label(admin, args.workspace, args.org)
-    lead = [f"Create {args.name!r} in {workspace_label}"]
+    new_doc = (args.name, workspace_label)
     with _explaining(config, "workspace"), client_for("") as admin:
         clash = name_clash(admin, workspace_id, args.name)
     if clash:
@@ -1524,7 +1524,7 @@ def run(
         demo_data=args.demo_data,
         seed_events=args.seed_events,
     )
-    if not _show_plan(plan, lead, args, out) or args.dry_run or not _confirm(args, out):
+    if not _show_plan(plan, new_doc, args, out) or args.dry_run or not _confirm(args, out):
         return
     with _explaining(config, "workspace"), client_for("") as admin:
         # Re-check right before creating: the workspace can change after the first look.
@@ -1602,7 +1602,7 @@ def _set_up_existing(client: GristClient, config: Config, args: argparse.Namespa
         args.demo_data,
         args.seed_events,
     )
-    if not _show_plan(plan, [], args, out) or args.dry_run or not _confirm(args, out):
+    if not _show_plan(plan, None, args, out) or args.dry_run or not _confirm(args, out):
         _finish(plan, warnings, args, out)
         if not plan.steps and not args.dry_run:  # the user's only chance to learn the id
             print_next_steps(out, args.settings_id, args.old_doc_id, check=False)
@@ -1622,7 +1622,19 @@ def _set_up_existing(client: GristClient, config: Config, args: argparse.Namespa
         raise Interrupted("aborted; re-run to add what is still missing") from None
 
 
-def _show_plan(plan: Plan, lead: Sequence[str], args: argparse.Namespace, out) -> bool:
+def _new_document_groups(plan: Plan, new_doc: tuple[str, str]) -> list[tuple[str, list[str]]]:
+    """The plan of a new document: its document, tables and page always come together, so
+    they share one heading; the rest (pre-loaded data) follows as usual."""
+    name, label = new_doc
+    tables = [s.table.id for s in plan.steps if isinstance(s, CreateTable)]
+    pages = [s.summary.page for s in plan.steps if isinstance(s, CreateSummaryPage)]
+    lines = [f"Tables: {', '.join(tables)}"] if tables else []
+    lines += [f"A {p!r} page showing each athlete's best per event" for p in pages]
+    rest = [(h, ls) for h, ls in grouped(plan.steps) if h not in ("Tables", "Personal bests")]
+    return [(f"New document {name!r} in {label}", lines), *rest]
+
+
+def _show_plan(plan: Plan, new_doc: tuple[str, str] | None, args: argparse.Namespace, out) -> bool:
     """Print notes, conflicts and the whole plan. Returns False when there is nothing to do."""
     if plan.notes:
         print(
@@ -1635,7 +1647,7 @@ def _show_plan(plan: Plan, lead: Sequence[str], args: argparse.Namespace, out) -
         print("Needs a manual fix in Grist (this script changes nothing for these):", file=out)
         for conflict in plan.conflicts:
             print(f"  - {conflict}", file=out)
-    if not lead and not plan.steps:
+    if not new_doc and not plan.steps:
         print(
             ("\n" if getattr(args, "guided", False) else "")
             + "Nothing to do: the document already has everything this script adds. "
@@ -1644,8 +1656,10 @@ def _show_plan(plan: Plan, lead: Sequence[str], args: argparse.Namespace, out) -
         )
         return False
     _section(out, "Plan")
-    _print_groups([("Document", lead)] if lead else [], out)
-    _print_groups(grouped(plan.steps), out)
+    if new_doc:
+        _print_groups(_new_document_groups(plan, new_doc), out)
+    else:
+        _print_groups(grouped(plan.steps), out)
     if args.dry_run:
         print("Dry run: nothing was changed. Run again without --dry-run to apply.", file=out)
     return True
