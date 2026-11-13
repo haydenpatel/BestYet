@@ -78,7 +78,7 @@ Computed by Grist, read only (never write these):
 - `Results.Grade` = `$Athlete.Grade`, recalculated when `Athlete` is set. Changing an athlete's grade later does not alter old results.
 - `Results.Division` = `$Athlete.Division`, recalculated when `Athlete` is set. It can be overridden per result.
 - `Results.Implement` = lookup in `Implements` by Event, Grade and Division (exact match, blank when there is no row), recalculated when `Event` or `Division` is set.
-- Limitation: `Grade` and `Division` are triggered by `Athlete` only, and `Implement` by `Event` and `Division` only. Send `Athlete` and `Event` in the same create call so all the defaults resolve. A later edit to `Athlete` recomputes `Grade` and `Division` (replacing a division override); an edit to `Grade` alone does not recompute `Implement`: edit `Event` or `Division` to refresh it.
+- Limitation: `Grade` and `Division` are triggered by `Athlete` only, and `Implement` by `Event` and `Division` only. Send `Athlete` and `Event` in the same create call so all the defaults resolve. Editing the `Athlete` field of an existing result recomputes its `Grade` and `Division` (replacing a division override); editing its `Grade` alone does not recompute `Implement`: edit `Event` or `Division` to refresh it. Editing an athlete's own default `Division` or `Grade` in the Athletes table changes no existing result (its `Division`, `Grade`, `Implement` and any override stay as they were).
 
 ### PB summary table
 `Results_summary_Athlete_Event_Implement` has one row per Athlete, Event and Implement, with `count` and `Best` (Numeric). It is part of the contract, and the app reads personal bests from it: the app never calculates them. If it is missing or renamed, the startup check fails.
