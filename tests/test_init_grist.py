@@ -553,7 +553,7 @@ def test_failure_without_create_has_no_doc_hint(capsys):
     assert run(fake) == 1
     err = capsys.readouterr().err
     assert "without --create" not in err and "GRIST_DOC_ID=" not in err
-    assert "Run bestyet-init again" in err and "--- What did not complete ---" in err
+    assert "run bestyet-init again" in err and "--- What did not complete ---" in err
 
 
 def test_unrelated_tables_columns_not_read():
@@ -1117,7 +1117,7 @@ def test_partial_failure_after_create_names_the_document(capsys):
         in captured.err
     )
     assert "Removed Grist's empty default table (Table1)" in captured.err
-    assert "without --create, with GRIST_DOC_ID=NEWDOC" in captured.err
+    assert "(without --create)" in captured.err
 
 
 def test_create_ends_with_a_short_done_message_and_next_steps(capsys):
@@ -1132,9 +1132,9 @@ def test_create_ends_with_a_short_done_message_and_next_steps(capsys):
         in done
     )
     assert "and example data." in done and "Needs attention" not in done
-    assert "\n       GRIST_DOC_ID=NEWDOC\n" in done  # on a line of its own
+    assert "\n     GRIST_DOC_ID=NEWDOC\n" in done  # on a line of its own
     assert done.index("GRIST_DOC_ID=NEWDOC") < done.index("2. Then run bestyet-init --check")
-    assert "saved nothing" in done
+    assert "does not change your settings" in done
     for part in ("Setting up", "Plan", "Next steps"):
         assert f"--- {part} ---" in out
     assert "--- Done ---" not in out
@@ -1733,8 +1733,8 @@ def test_saying_no_to_grist_doc_id_continues_with_the_workspace_questions(monkey
     out = capsys.readouterr().out
     assert "Use workspace 'Work'?" in out and fake.created_docs == [(10, "New one")]
     assert "1. Update GRIST_DOC_ID in your settings" in out
-    assert "from the old document to the new one" in out
-    assert "GRIST_DOC_ID=NEWDOC" in out and "keep using the old document" in out
+    assert "currently points at a different document" in out
+    assert "GRIST_DOC_ID=NEWDOC" in out and "keep using that other document" in out
 
 
 def test_without_grist_doc_id_the_next_step_is_just_to_add_it(monkeypatch, capsys):
@@ -1745,7 +1745,7 @@ def test_without_grist_doc_id_the_next_step_is_just_to_add_it(monkeypatch, capsy
 
 def test_flag_form_create_with_grist_doc_id_set_also_warns_about_the_old_document(capsys):
     assert run(FakeGrist(), *CREATE, env=ENV) == 0
-    assert "from the old document to the new one" in capsys.readouterr().out
+    assert "currently points at a different document" in capsys.readouterr().out
 
 
 def test_failure_after_create_says_grist_doc_id_still_points_at_the_old_document(capsys):
@@ -1753,7 +1753,7 @@ def test_failure_after_create_says_grist_doc_id_still_points_at_the_old_document
     fake.fail_on = "POST /api/docs/NEWDOC/tables"
     assert run(fake, *CREATE, env=ENV) == 1
     err = capsys.readouterr().err
-    assert "GRIST_DOC_ID=NEWDOC in your settings (it still points at the old document)" in err
+    assert "currently points at a different document: GRIST_DOC_ID=NEWDOC" in err
 
 
 def test_unreadable_grist_doc_id_gets_the_usual_readable_error(monkeypatch, capsys):
@@ -1763,3 +1763,108 @@ def test_unreadable_grist_doc_id_gets_the_usual_readable_error(monkeypatch, caps
     assert "could not find the document (HTTP 404)" in capsys.readouterr().err
     assert main([], ENV, reply(401, "no")) == 1
     assert "rejected the API key" in capsys.readouterr().err
+
+
+# The settings step: whenever the document set up is not the one GRIST_DOC_ID points at.
+
+
+def settings_step_in(out, doc_id):
+    return f"\n     GRIST_DOC_ID={doc_id}\n" in out
+
+
+def test_a_document_picked_from_the_list_gets_the_settings_step(monkeypatch, capsys):
+    fake = full_fake()
+    del fake.tables["Meets"]
+    fake.workspaces = workspace_with("Alpha", "Beta")
+    # GRIST_DOC_ID points elsewhere: say no to it, pick Beta
+    assert guided(monkeypatch, fake, "n\ny\n2\nn\nn\ny\n", env=ENV) == 0
+    out = capsys.readouterr().out
+    assert settings_step_in(out, "DOC1") and "currently points at a different document" in out
+    assert "keep using that other document" in out and "2. Then run bestyet-init --check" in out
+
+
+def test_a_picked_document_with_no_grist_doc_id_set_gets_an_add_line(monkeypatch, capsys):
+    fake = full_fake()
+    del fake.tables["Meets"]
+    fake.workspaces = workspace_with("Alpha", "Beta")
+    assert guided(monkeypatch, fake, "y\n2\nn\nn\ny\n") == 0
+    out = capsys.readouterr().out
+    assert settings_step_in(out, "DOC1") and "Add this line to your settings" in out
+
+
+def test_an_already_complete_picked_document_still_prints_the_settings_note(monkeypatch, capsys):
+    fake = full_fake()
+    fake.workspaces = workspace_with("Alpha", "Beta")
+    assert guided(monkeypatch, fake, "y\n2\nn\nn\n") == 0
+    out = capsys.readouterr().out
+    assert "Nothing to do" in out and settings_step_in(out, "DOC1")
+    assert "Then run bestyet-init --check" not in out
+    assert out.index("Nothing to do") < out.index("--- Next steps ---")
+
+
+def test_the_document_in_grist_doc_id_needs_no_settings_step(monkeypatch, capsys):
+    fake = full_fake()
+    del fake.tables["Meets"]
+    assert guided(monkeypatch, fake, "y\nn\nn\ny\n", env=ENV) == 0  # yes: that document
+    out = capsys.readouterr().out
+    assert "GRIST_DOC_ID=" not in out and "Update GRIST_DOC_ID" not in out
+    assert "- Run bestyet-init --check" in out
+    fake = full_fake()
+    fake.workspaces = workspace_with("Alpha")
+    env = {**ENV, "GRIST_DOC_ID": "DOC0"}  # no, then pick the very same document from the list
+    assert guided(monkeypatch, fake, "n\ny\n1\nn\nn\n", env=env) == 0
+    out = capsys.readouterr().out
+    assert "Nothing to do" in out and "GRIST_DOC_ID=DOC0" not in out
+
+
+def test_using_the_existing_document_after_a_name_clash_gets_the_settings_step(monkeypatch, capsys):
+    fake = full_fake()
+    del fake.tables["Meets"]
+    fake.workspaces = workspace_with("My Doc")
+    assert guided(monkeypatch, fake, "y\nc\nmy doc\ny\nn\nn\ny\n") == 0
+    out = capsys.readouterr().out
+    assert fake.created_docs == [] and settings_step_in(out, "DOC0")
+
+
+def test_flag_form_clash_yes_gets_the_settings_step(monkeypatch, capsys):
+    fake = full_fake()
+    del fake.tables["Meets"]
+    fake.workspaces = workspace_with("BestYet")
+    monkeypatch.setattr(sys, "stdin", Stdin("y\ny\n", tty=True))
+    assert run(fake, *CREATE, env=ENV, yes=False) == 0
+    out = capsys.readouterr().out
+    assert fake.created_docs == [] and settings_step_in(out, "DOC0")
+    assert "currently points at a different document" in out
+
+
+def test_a_picked_document_that_fails_midway_gets_the_settings_item(monkeypatch, capsys):
+    fake = full_fake()
+    del fake.tables["Meets"]
+    fake.workspaces = workspace_with("Alpha", "Beta")
+    fake.fail_on = "POST /api/docs/DOC1/tables"
+    assert guided(monkeypatch, fake, "y\n2\nn\nn\ny\n") == 1
+    err = capsys.readouterr().err
+    assert "Add this line to your settings (environment or .env): GRIST_DOC_ID=DOC1" in err
+    assert "3. Then run bestyet-init again; it only adds what is missing." in err
+
+
+def test_failure_after_create_next_steps_are_one_action_each(capsys):
+    fake = FakeGrist()
+    fake.fail_on = "POST /api/docs/NEWDOC/tables"
+    assert run(fake, *CREATE, env=ENV_NO_DOC) == 1
+    steps = capsys.readouterr().err.split("--- Next steps ---")[1]
+    assert "1. Fix the cause shown under Error, if you can." in steps
+    assert "2. Add this line to your settings (environment or .env): GRIST_DOC_ID=NEWDOC" in steps
+    assert (
+        "3. Then run bestyet-init again (without --create); it only adds what is missing." in steps
+    )
+    assert "Table1" not in steps  # it was removed: nothing to say about it
+    assert all(line.count("(") <= 1 for line in steps.splitlines())  # no stacked ones
+
+
+def test_failure_with_table1_left_mentions_allow_existing_tables_once(capsys):
+    fake = FakeGrist()
+    fake.fail_on = "POST /api/docs/NEWDOC/apply"  # the default table cannot be removed
+    assert run(fake, *CREATE, env=ENV_NO_DOC) == 1
+    steps = capsys.readouterr().err.split("--- Next steps ---")[1]
+    assert "4. If Table1 is still in the document" in steps and steps.count("Table1") == 1

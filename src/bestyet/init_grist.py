@@ -958,7 +958,7 @@ def parse_args(argv: Sequence[str] | None, can_ask: bool = False) -> argparse.Na
             "refused unless Athletes, Meets and Results are all empty"
         ),
     )
-    p.set_defaults(doc_id=None, old_doc_id=None)  # set by the questions, not by flags
+    p.set_defaults(doc_id=None, old_doc_id="", settings_id=None)  # set by run, not by flags
     args = p.parse_args(argv)
     if args.check:
         used = [
@@ -1027,26 +1027,25 @@ def rerun_hint(doc_id: str) -> str:
     )
 
 
-def next_steps_after_create(doc_id: str, rerun_safe: bool, old_doc: bool = False) -> list[str]:
-    """What to do when a run stopped after the document was created. `old_doc`: GRIST_DOC_ID
-    is set and still points at another document."""
-    where = (
-        "in your settings (it still points at the old document)" if old_doc else "in your settings"
-    )
-    use = (
-        f"run bestyet-init without --create, with GRIST_DOC_ID={doc_id} {where} "
-        f"(add --allow-existing-tables if {DEFAULT_TABLE} is still there)"
-    )
-    if rerun_safe:
-        return [
-            "Fix the cause shown under Error, if you can.",
-            f"{use[0].upper()}{use[1:]}. It only adds what is missing.",
-        ]
-    return [
-        "Fix the problem described under Error in Grist.",
-        f"Then {use}.",
-        "Do not run --create again: it would make another document.",
+def next_steps_after_create(
+    doc_id: str, rerun_safe: bool, old_doc_id: str = "", table1_left: bool = False
+) -> list[str]:
+    """What to do when a run stopped after the document was created."""
+    steps = [
+        "Fix the cause shown under Error, if you can."
+        if rerun_safe
+        else "Fix the problem described under Error in Grist.",
+        settings_item(doc_id, old_doc_id),
+        "Then run bestyet-init again (without --create)"
+        + ("; it only adds what is missing." if rerun_safe else "."),
     ]
+    if table1_left:
+        steps.append(
+            f"If {DEFAULT_TABLE} is still in the document, add --allow-existing-tables to that run."
+        )
+    if not rerun_safe:
+        steps.append("Do not run --create again: it would make another document.")
+    return steps
 
 
 def default_table_state(client: GristClient) -> tuple[bool, str | None]:
@@ -1269,6 +1268,64 @@ def guide(args: argparse.Namespace, config: Config, client_for, out, stdin) -> b
     return True
 
 
+def _settings_id(config: Config, args: argparse.Namespace) -> str | None:
+    """The id to tell the user to put in their settings: set when the document being set up
+    is not the one GRIST_DOC_ID already points at."""
+    return config.grist_doc_id if config.grist_doc_id != args.old_doc_id else None
+
+
+def settings_lines(doc_id: str, old_doc_id: str) -> list[str]:
+    """The settings step of the closing next steps (text for item 1)."""
+    if old_doc_id:
+        return [
+            (
+                "Update GRIST_DOC_ID in your settings (environment or .env), which currently "
+                "points at a different document (this script does not change your settings):"
+            ),
+            f"     GRIST_DOC_ID={doc_id}",
+            "   Until you do, bestyet-init and the app keep using that other document.",
+        ]
+    return [
+        (
+            "Add this line to your settings (environment or .env); this script does not change "
+            "your settings:"
+        ),
+        f"     GRIST_DOC_ID={doc_id}",
+    ]
+
+
+def settings_item(doc_id: str, old_doc_id: str) -> str:
+    """The same step as one line, for a failure's next steps."""
+    if old_doc_id:
+        return (
+            "Update GRIST_DOC_ID in your settings (environment or .env), which currently points "
+            f"at a different document: GRIST_DOC_ID={doc_id}"
+        )
+    return f"Add this line to your settings (environment or .env): GRIST_DOC_ID={doc_id}"
+
+
+def print_next_steps(out, doc_id: str | None, old_doc_id: str, check: bool = True) -> None:
+    """The closing Next steps: the settings step (when the document is not the one in
+    GRIST_DOC_ID), then the --check pointer."""
+    if not doc_id and not check:
+        return
+    _section(out, "Next steps")
+    n = 0
+    if doc_id:
+        first, *rest = settings_lines(doc_id, old_doc_id)
+        n += 1
+        print(f"  {n}. {first}", file=out)
+        for line in rest:
+            print(line, file=out)
+    if check:
+        text = "run bestyet-init --check to confirm the document matches the contract."
+        n += 1
+        if doc_id:
+            print(f"  {n}. Then {text}", file=out)
+        else:
+            print(f"  - {text[0].upper()}{text[1:]}", file=out)
+
+
 def run(
     args: argparse.Namespace,
     config: Config,
@@ -1278,6 +1335,7 @@ def run(
     def client_for(doc_id: str) -> GristClient:
         return GristClient(config.grist_url, doc_id, config.grist_api_key, transport=transport)
 
+    args.old_doc_id = config.grist_doc_id  # what the settings point at before this run
     if args.guided:
         if not guide(args, config, client_for, out, sys.stdin):
             return
@@ -1305,11 +1363,11 @@ def run(
     if not args.create:
         if not config.grist_doc_id:
             raise InitError("GRIST_DOC_ID is missing (or use --create)")
+        args.settings_id = _settings_id(config, args)
         with _explaining(config, "document"), client_for(config.grist_doc_id) as client:
             _set_up_existing(client, config, args, out)
         return
 
-    args.old_doc_id = config.grist_doc_id  # set and not used: it keeps pointing at the old one
     with _explaining(config, "workspace"), client_for("") as admin:
         workspace_id, workspace_label = resolve_workspace_label(admin, args.workspace, args.org)
     lead = [f"Create {args.name!r} in {workspace_label}"]
@@ -1328,6 +1386,7 @@ def run(
             print("Nothing was changed.", file=out)
             return
         config = replace(config, grist_doc_id=clash["id"])
+        args.settings_id = _settings_id(config, args)
         with _explaining(config, "document"), client_for(config.grist_doc_id) as client:
             _set_up_existing(client, config, args, out)
         return
@@ -1359,7 +1418,8 @@ def run(
                 doc=(args.name, workspace_label),
             )
     except PartialFailure as e:
-        steps = next_steps_after_create(doc_id, e.rerun_safe, bool(args.old_doc_id))
+        table1_left = not any(d.startswith("Removed") for d in e.done) and not e.attention
+        steps = next_steps_after_create(doc_id, e.rerun_safe, args.old_doc_id, table1_left)
         raise ErrorReport(e.report(config, steps)) from None
     except (GristError, InitError) as e:
         safe = isinstance(e, GristError)
@@ -1368,7 +1428,7 @@ def run(
             error_report(
                 reason,
                 done=[("Document", done)],
-                steps=next_steps_after_create(doc_id, safe, bool(args.old_doc_id)),
+                steps=next_steps_after_create(doc_id, safe, args.old_doc_id, True),
             )
         ) from None
     except KeyboardInterrupt:
@@ -1410,18 +1470,19 @@ def _set_up_existing(client: GristClient, config: Config, args: argparse.Namespa
     )
     if not _show_plan(plan, [], args, out) or args.dry_run or not _confirm(args, out):
         _finish(plan, warnings, args, out)
+        if not plan.steps and not args.dry_run:  # the user's only chance to learn the id
+            print_next_steps(out, args.settings_id, args.old_doc_id, check=False)
         return
     try:
-        _apply(plan, client, warnings, args, out)
+        _apply(plan, client, warnings, args, out, doc_id=args.settings_id)
     except PartialFailure as e:
-        steps = (
-            [
-                "Fix the cause shown under Error, if you can.",
-                "Run bestyet-init again; it only adds what is missing.",
-            ]
-            if e.rerun_safe
-            else ["Fix the problem described under Error in Grist."]
-        )
+        steps = ["Fix the cause shown under Error, if you can."]
+        if not e.rerun_safe:
+            steps = ["Fix the problem described under Error in Grist."]
+        if args.settings_id:
+            steps.append(settings_item(args.settings_id, args.old_doc_id))
+        if e.rerun_safe:
+            steps.append("Then run bestyet-init again; it only adds what is missing.")
         raise ErrorReport(e.report(config, steps)) from None
     except KeyboardInterrupt:
         raise Interrupted("aborted; re-run to add what is still missing") from None
@@ -1528,30 +1589,7 @@ def _finish(
             "(listed above). Fix them in Grist, then re-run."
         )
     if applied is not None:
-        _section(out, "Next steps")
-        check = "run bestyet-init --check to confirm the document matches the contract."
-        if doc_id:
-            if args.old_doc_id:
-                print(
-                    "  1. Update GRIST_DOC_ID in your settings (environment or .env) from the "
-                    "old document to the new one (this script saved nothing):",
-                    file=out,
-                )
-                print(f"       GRIST_DOC_ID={doc_id}", file=out)
-                print(
-                    "     Until you do, bestyet-init and the app keep using the old document.",
-                    file=out,
-                )
-            else:
-                print(
-                    "  1. Add this line to your settings (environment or .env); this script "
-                    "saved nothing:",
-                    file=out,
-                )
-                print(f"       GRIST_DOC_ID={doc_id}", file=out)
-            print(f"  2. Then {check}", file=out)
-        else:
-            print(f"  - {check[0].upper()}{check[1:]}", file=out)
+        print_next_steps(out, doc_id, args.old_doc_id)
 
 
 def main(
