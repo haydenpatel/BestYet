@@ -200,7 +200,7 @@ def test_case_and_space_variants_are_not_re_added():
         {"id": i, "fields": {"Name": n, "Kind": "Time"}} for i, n in enumerate(variants, 1)
     ]
     fake.rows["Implements"] = [
-        {"id": 1, "fields": {"Event": 1, "Grade": "grade 8 ", "Division": " girls", "Weight": "x"}},
+        {"id": 1, "fields": {"Event": 1, "Grade": "Grade 8", "Division": "Girls", "Weight": "x"}},
         {"id": 2, "fields": {"Event": 3, "Grade": "GRADE 9", "Division": "BOYS ", "Weight": "y"}},
     ]
     before = json.dumps(fake.rows)
@@ -211,8 +211,11 @@ def test_case_and_space_variants_are_not_re_added():
         (r["fields"]["Event"], r["fields"]["Grade"], r["fields"]["Division"])
         for r in fake.rows["Implements"][2:]
     ]
-    assert len(new) == len(schema.SAMPLE_IMPLEMENTS) - 2
-    assert (1, "Grade 8", "Girls") not in new and (3, "Grade 9", "Boys") not in new
+    # The Event is matched by name ignoring case and spaces; Grade and Division exactly, as the
+    # Implement formula does: "GRADE 9" and "BOYS " do not count as present.
+    assert len(new) == len(schema.SAMPLE_IMPLEMENTS) - 1
+    assert (1, "Grade 8", "Girls") not in new
+    assert (3, "Grade 9", "Boys") in new
     assert (1, "Grade 8", "Boys") in new and (3, "Grade 9", "Girls") in new
     assert json.loads(before)["Events"] == fake.rows["Events"][:3]
     assert ids["discus "] == 1
@@ -2291,3 +2294,38 @@ def test_check_rejects_name_like_the_other_write_flags(capsys):
     with pytest.raises(SystemExit):
         main(["--check", "--name", "X"], ENV, FakeGrist().transport)
     assert "--name" in capsys.readouterr().err
+
+
+HINT = "Add implement weights by hand"
+
+
+def test_implements_hint_on_a_new_document_only_without_the_sample_implements(capsys):
+    assert run(FakeGrist(), *CREATE, "--seed-events", env=ENV_NO_DOC) == 0
+    assert HINT in capsys.readouterr().out
+    for flag in ("--seed-implements", "--demo-data"):
+        assert run(FakeGrist(), *CREATE, flag, env=ENV_NO_DOC) == 0
+        assert HINT not in capsys.readouterr().out
+
+
+def test_implements_hint_on_an_existing_document_depends_on_having_rows(capsys):
+    fake = full_fake()
+    del fake.tables["Meets"]  # something to do, so the next steps are printed
+    assert run(fake) == 0
+    assert HINT in capsys.readouterr().out  # no Implements rows at all
+    fake = full_fake()
+    del fake.tables["Meets"]
+    fake.rows["Implements"] = [{"id": 1, "fields": {"Event": 1, "Grade": "Grade 8", "Weight": "x"}}]
+    assert run(fake) == 0  # the user's own weights: no hint, whatever samples are missing
+    assert HINT not in capsys.readouterr().out
+    fake = full_fake()
+    del fake.tables["Meets"]
+    assert run(fake, "--seed-implements") == 0
+    assert HINT not in capsys.readouterr().out
+
+
+def test_the_default_division_label_is_sent_for_athletes_only():
+    fake = FakeGrist()
+    assert run(fake, *CREATE, env=ENV_NO_DOC) == 0
+    assert fake.tables["Athletes"]["Division"]["label"] == "Default division"
+    assert "label" not in fake.tables["Results"]["Division"]
+    assert "label" not in fake.tables["Implements"]["Division"]

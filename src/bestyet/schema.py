@@ -183,15 +183,15 @@ SUMMARY = Summary(
 # Grist adds ``count`` (Int) to every summary table; the contract requires it.
 SUMMARY_REQUIRED_COLUMNS = ("count", *(c.id for c in SUMMARY.columns))
 
-# Results columns the app may write. Division, Grade and Implement are normally left out
-# of the payload so their trigger formulas fill them in; update Division after creation to override the default.
+# Results columns the app may write. Grade and Implement are normally left out of the payload
+# so their trigger formulas fill them in. Division is not listed: a create call that sets
+# Athlete recomputes it, so set Division by editing the result afterwards to override the default.
 WRITABLE_RESULTS_COLUMNS = (
     "Athlete",
     "Event",
     "Meet",
     "Mark",
     "Place",
-    "Division",
     "Grade",
     "Implement",
 )

@@ -18,8 +18,8 @@ events it needs, and refuses (writing nothing) unless Athletes, Meets and Result
 empty.
 
 The Events and Implements seeds only add rows that are missing (Events matched by Name,
-Implements by Event, Grade and Division, ignoring case and surrounding spaces); an existing row is never
-changed or duplicated.
+ignoring case and surrounding spaces; Implements by that Event plus Grade and Division exactly,
+as the Implement formula matches them); an existing row is never changed or duplicated.
 
 The plan is a list of small steps, each with ``describe()`` (for the plan), ``created()`` (for
 the closing summary) and ``apply(client)``, so later work adds step types and extends
@@ -426,12 +426,12 @@ def _missing_implements(
     have = {
         (
             _norm(names.get(r["fields"].get("Event"))),
-            _norm(r["fields"].get("Grade")),
-            _norm(r["fields"].get("Division")),
+            r["fields"].get("Grade") or "",
+            r["fields"].get("Division") or "",
         )
         for r in implements
     }
-    return tuple(i for i in schema.SAMPLE_IMPLEMENTS if tuple(_norm(v) for v in i[:3]) not in have)
+    return tuple(i for i in schema.SAMPLE_IMPLEMENTS if (_norm(i[0]), i[1], i[2]) not in have)
 
 
 @dataclass(frozen=True)
@@ -1641,9 +1641,7 @@ def _set_up_existing(client: GristClient, config: Config, args: argparse.Namespa
     events = client.records("Events") if "Events" in present else None
     implements = client.records("Implements") if "Implements" in present else None
     args.events_hint = not args.seed_events and bool(_missing_events(events or []))
-    args.implements_hint = not (args.seed_implements or args.demo_data) and bool(
-        _missing_implements(events or [], implements or [])
-    )
+    args.implements_hint = not (args.seed_implements or args.demo_data) and not implements
     if args.demo_data:
         _require_empty(client, present, ". Nothing was changed")
     plan = build_plan(

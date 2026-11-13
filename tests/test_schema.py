@@ -186,7 +186,8 @@ def test_writable_and_computed_split():
     writable = set(schema.WRITABLE_RESULTS_COLUMNS)
     computed = set(schema.COMPUTED_RESULTS_COLUMNS)
     assert not writable & computed
-    assert writable | computed == results
+    assert "Division" not in writable  # recomputed when Athlete is set on create
+    assert writable | computed | {"Division"} == results
     for name in computed:
         assert results_col(name).is_formula
 
