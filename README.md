@@ -62,7 +62,7 @@ The settings the init script and the app read, as environment variables:
 | `GRIST_URL` | Base URL of the Grist server | Yes | |
 | `GRIST_API_KEY` | API key for the Grist user BestYet acts as | Yes | |
 | `GRIST_DOC_ID` | Id of the Grist document | The app: yes. The init script: only for an existing document (optional in guided mode, not used with `--create`) | |
-| `PORT` | Port to listen on | No | `8585` |
+| `PORT` | Port the container will listen on (not yet used by `flask run`; see [Development](#development)) | No | `8585` |
 | `TZ` | Time zone, used for "today" | No | `UTC` |
 
 A `.env` file is not required (real environment variables work and take precedence), but it is strongly recommended for local use: copy [`.env.example`](.env.example) to `.env` and fill it in.
@@ -87,15 +87,22 @@ Assuming your environment is already configured:
 
 ```bash
 python3 -m venv .venv && . .venv/bin/activate && pip install -e ".[dev]"
-flask --app bestyet run --debug
+flask --app bestyet run --debug --port 8585
 ruff check . && ruff format --check . && pytest
 ```
+
+`flask run` does not read `PORT`: it listens on Flask's own default (5000) unless you pass `--port`, so use `--port 8585` (or the value of `PORT`). The container work will use `PORT`.
 
 Enable the git hooks once per clone with `git config core.hooksPath .githooks`. They refuse commits and merges on `main`: work on a branch and open a pull request. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Status and Limitations
 
-BestYet is in early development and does not do anything useful yet. It works with Grist's REST API, so it is tied to the document layout described in [SPEC.md](SPEC.md).
+BestYet 0.0.2 is a non-functional foundations release: the init script and the startup contract check work, but there is no app yet. It works with Grist's REST API, so it is tied to the document layout described in [SPEC.md](SPEC.md).
+
+- No app screens yet: `flask --app bestyet run` serves only `/health`, once the startup contract check passes.
+- No container image or compose file yet.
+- No login: never expose it to the internet (see [Privacy](#privacy)).
+- Grist's hosted service should work but is untested.
 
 ## License
 

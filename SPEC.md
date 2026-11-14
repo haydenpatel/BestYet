@@ -1,4 +1,4 @@
-# Athletics sidecar: specification
+# BestYet: specification
 
 A small, stateless mobile web app that fronts a [Grist](https://www.getgrist.com/) document used to track athletics results. Grist is the only datastore and the desktop UI. This app is the quick phone view.
 
@@ -176,11 +176,13 @@ Run the app against a separate Grist document per environment. Development and t
 The repo must include a script, with documentation in the README, that sets up a document so the schema contract above is satisfied. It is the executable form of this spec, and it is how anyone installs the app on a fresh Grist document.
 
 Requirements:
+- Guided mode: run with no options in a terminal, it asks for what it needs (the document, or the workspace and name for a new one), shows the plan and asks before changing anything. Options skip the questions (it still asks for a value that is missing, such as `--create` without `--workspace`). It never prompts without a terminal or with `--check`.
 - Uses Grist's REST API only, with the same `GRIST_URL` and `GRIST_API_KEY` settings as the app.
 - Can create a new empty document in a given workspace (for example `--create --workspace <id-or-name> --name "..."`), or set up an existing empty document given by `GRIST_DOC_ID`.
 - Creates the tables, columns, Choice lists, Ref links, the computed and trigger formulas from "Reference formulas", column labels where the contract names one (`Athletes.Division`: "Default division"; the check matches on column id only), and the PB summary table with its `Best` column. The summary table is created through a view section on the `Personal Bests` page, only if that page is missing; an existing page is never changed. Page names match ignoring case and surrounding spaces, so an existing `Personal bests` page counts (here, in `--check` and in the startup check). It sets `visibleCol` on the Ref columns listed under "Ref columns show names" only where it is unset, and creates no other pages or forms (the other pages are Grist's own raw-data views).
 - Optionally seeds the Events table (`--seed-events`, the default event list) and the Implements table (`--seed-implements`, sample weights by grade and division). Both are opt-in, so a user can end up with empty tables. Each seed adds only the events it needs: `--seed-implements` the events its rows use (Discus and Shot Put), `--demo-data` the events its results and those implements use. Existing rows are never changed or duplicated.
 - Optional `--demo-data`: loads a few fictional athletes, meets and results so the app has something to show. It is a plan step like the others and also seeds the Implements and the events it needs. The demo data must be obviously fake. It only loads into a document whose Athletes, Meets and Results tables are all empty (or one the script has just created), and otherwise refuses. This protects real data without restricting what the document is called.
+- `--create` never creates a second document with the same name in a workspace: in a terminal it asks whether to use the existing one instead, and without a terminal (or with `--yes`) it refuses.
 - Makes no assumptions about the environment: it works on a document with any name, against any Grist server. `--create` defaults to the name "BestYet" and accepts any `--name`. Nothing in the script or the app may require a particular name or marker, so anyone can set up a fresh production document with it.
 - Idempotent: running it again on an already initialised document makes no changes and says so. It only adds what is missing and never drops, renames or overwrites anything.
 - Optional `--check`: validates an existing document against the contract and reports every difference. The app reuses the same check at startup.
