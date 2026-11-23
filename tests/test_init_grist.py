@@ -3,11 +3,13 @@ import json
 import socket
 import ssl
 import sys
+from pathlib import Path
 
 import httpx
 import pytest
 from fake_grist import BASE, DOC, KEY, FakeGrist
 
+import bestyet
 from bestyet import dates, marks, schema
 from bestyet.config import Config
 from bestyet.grist import GristClient
@@ -538,11 +540,16 @@ def test_key_never_in_output(capsys):
     assert KEY not in captured.out + captured.err
 
 
-def test_script_has_no_environment_marker():
-    import bestyet.init_grist as mod
+def source_files():
+    """Every Python file under src/bestyet, so new modules are covered."""
+    files = sorted(Path(bestyet.__file__).parent.rglob("*.py"))
+    assert files
+    return files
 
-    with open(mod.__file__) as f:
-        assert "TEST" not in f.read()
+
+def test_script_has_no_environment_marker():
+    for path in source_files():
+        assert "TEST" not in path.read_text(), path.name
 
 
 def test_plan_creates_plain_columns_first_then_formulas():
