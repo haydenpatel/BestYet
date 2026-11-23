@@ -12,7 +12,8 @@ difference from the contract (``bestyet.check``) and exits non-zero on any.
 Seed rows are opt-in plan steps: ``--seed-events``, ``--seed-implements`` (which adds only the
 events its rows use) and ``--demo-data`` (the last step; refused unless Athletes, Meets and
 Results are all empty). Existing rows are never changed or duplicated: Events are matched by
-Name and Implements by Event, Grade and Division, ignoring case and surrounding spaces.
+Name (ignoring case and surrounding spaces) and Implements by that Event plus Grade and
+Division exactly.
 
 Output is for a person: plain-language lines on stdout, errors on stderr (``explain`` names the
 host only, never credentials, path or key). A run that stopped part-way reports what was done
@@ -1055,28 +1056,28 @@ def rerun_hint(doc_id: str) -> str:
     )
 
 
-def _fix_and_settings(rerun_safe: bool, doc_id: str | None, old_doc_id: str) -> list[str]:
-    """The first next steps after a failure: fix the cause, and the settings step if the
-    document being set up is not the one in GRIST_DOC_ID."""
-    steps = [
+def _fix_step(rerun_safe: bool) -> str:
+    return (
         "Fix the cause shown under Error, if you can."
         if rerun_safe
         else "Fix the problem described under Error in Grist."
-    ]
-    if doc_id:
-        steps.append("{}: {}".format(*settings_step(doc_id, old_doc_id)[:2]))
-    return steps
+    )
+
+
+def _settings_line(doc_id: str, old_doc_id: str) -> str:
+    return "{}: {}".format(*settings_step(doc_id, old_doc_id)[:2])
 
 
 def next_steps_after_create(
     doc_id: str, rerun_safe: bool, old_doc_id: str = "", table1_left: bool = False
 ) -> list[str]:
     """What to do when a run stopped after the document was created."""
-    steps = _fix_and_settings(rerun_safe, doc_id, old_doc_id)
-    steps.append(
+    steps = [
+        _fix_step(rerun_safe),
+        _settings_line(doc_id, old_doc_id),
         "Then run bestyet-init again (without --create)"
-        + ("; it only adds what is missing." if rerun_safe else ".")
-    )
+        + ("; it only adds what is missing." if rerun_safe else "."),
+    ]
     if table1_left:
         steps.append(
             f"If {DEFAULT_TABLE} is still in the document, add --allow-existing-tables to that run."
@@ -1546,7 +1547,9 @@ def _set_up_existing(client: GristClient, config: Config, args: argparse.Namespa
     try:
         _apply(plan, client, warnings, args, out, doc_id=args.settings_id)
     except PartialFailure as e:
-        steps = _fix_and_settings(e.rerun_safe, args.settings_id, args.old_doc_id)
+        steps = [_fix_step(e.rerun_safe)]
+        if args.settings_id:
+            steps.append(_settings_line(args.settings_id, args.old_doc_id))
         if e.rerun_safe:
             steps.append("Then run bestyet-init again; it only adds what is missing.")
         raise ErrorReport(e.report(config, steps)) from None
