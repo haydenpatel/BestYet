@@ -1,6 +1,6 @@
 import pytest
 from fake_grist import BASE, DOC, KEY, FakeGrist
-from test_init_grist import ENV, run
+from test_init_grist import ENV, run, source_files
 
 from bestyet import StartupError, create_app, schema
 from bestyet.check import ContractError, check_document, has_page, page_names, require_contract
@@ -277,13 +277,8 @@ def test_app_startup_loads_config_from_the_environment(monkeypatch):
 
 
 def test_app_and_script_have_no_test_name_logic():
-    import inspect
-
-    import bestyet.check
-    import bestyet.init_grist
-
-    for module in (bestyet, bestyet.check, bestyet.init_grist):
-        assert "TEST" not in inspect.getsource(module)
+    for path in source_files():
+        assert "TEST" not in path.read_text(), path.name
 
 
 @pytest.mark.parametrize(
