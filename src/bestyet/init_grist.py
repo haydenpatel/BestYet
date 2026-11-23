@@ -1,34 +1,22 @@
 """Init script: set up a Grist document so the schema contract is satisfied.
 
-Run as ``python -m bestyet.init_grist`` (or ``bestyet-init``). It builds a plan by diffing
-``schema.TABLES`` against the document, then applies only additions through the REST API:
-missing tables, columns (plain, formula and trigger), the PB summary table with its page, and
-``visibleCol`` on Ref columns where it is unset. It never drops, renames, retypes or
-overwrites; the one exception is Grist's own empty default table in a document this run
-created (see ``remove_default_table``). The whole plan is printed first and applied only
-after confirmation (``--yes`` skips the prompt; without a terminal ``--yes`` or ``--dry-run``
-is required). ``--check`` instead reads the document (GET only), reports every difference from
-the contract (``bestyet.check``, also run by the app at startup) and exits non-zero on any.
+Run as ``python -m bestyet.init_grist`` (or ``bestyet-init``). It diffs ``schema.TABLES``
+against the document and applies only additions through the REST API: missing tables, columns,
+the PB summary table with its page, and ``visibleCol`` on Ref columns where it is unset. It
+never drops, renames, retypes or overwrites; the one exception is Grist's own empty default
+table in a document this run created (``remove_default_table``). The plan is printed first and
+applied after confirmation (``--yes`` skips the prompt; without a terminal ``--yes`` or
+``--dry-run`` is required). ``--check`` instead reads the document (GET only), reports every
+difference from the contract (``bestyet.check``) and exits non-zero on any.
 
-Seed rows are opt-in plan steps (a fresh document ends up with empty Events and Implements
-tables unless asked): the default Events with ``--seed-events``, the sample Implements with
-``--seed-implements`` (which also adds only the events their rows use). ``--demo-data`` adds
-fictional athletes, meets and results as the last step; it plans the Implements and only the
-events it needs, and refuses (writing nothing) unless Athletes, Meets and Results are all
-empty.
+Seed rows are opt-in plan steps: ``--seed-events``, ``--seed-implements`` (which adds only the
+events its rows use) and ``--demo-data`` (the last step; refused unless Athletes, Meets and
+Results are all empty). Existing rows are never changed or duplicated: Events are matched by
+Name and Implements by Event, Grade and Division, ignoring case and surrounding spaces.
 
-The Events and Implements seeds only add rows that are missing (Events matched by Name,
-ignoring case and surrounding spaces; Implements by that Event plus Grade and Division exactly,
-as the Implement formula matches them); an existing row is never changed or duplicated.
-
-The plan is a list of small steps, each with ``describe()`` (for the plan), ``created()`` (for
-the closing summary) and ``apply(client)``, so later work adds step types and extends
-``build_plan`` without touching the CLI.
-
-Output is for a person: plain-language lines on stdout, errors on stderr (``explain`` turns each
-Grist failure into a message with what was tried, the likely cause and what to check; it names
-the host only, never credentials, path or key). A run that applied changes ends with a summary
-and the next steps; a run that stopped part-way reports what was done and what was not.
+Output is for a person: plain-language lines on stdout, errors on stderr (``explain`` names the
+host only, never credentials, path or key). A run that stopped part-way reports what was done
+and what was not.
 """
 
 import argparse
@@ -49,7 +37,7 @@ from bestyet.grist import GristClient, GristError
 
 
 class InitError(Exception):
-    """A failure with a message that is safe to print as is."""
+    """A failure with a message that is safe to print."""
 
 
 class PartialFailure(InitError):
@@ -70,11 +58,11 @@ class PartialFailure(InitError):
 
     @property
     def rerun_safe(self) -> bool:
-        """A plain re-run (which only adds) is the fix: the failure was a Grist call."""
+        """A plain re-run (which only adds) fixes it: the failure was a Grist call."""
         return isinstance(self.error, GristError)
 
     def _incomplete(self) -> list[tuple[str, list[str]]]:
-        """What did not complete, in order; the failed step is marked on its lines."""
+        """What did not complete, in order, the failed step marked."""
         merged: dict[str, list[str]] = {}
         for heading, lines in grouped(self.pending[:1], hidden=True):
             merged[heading] = [f"{line} (failed; may be partly applied)" for line in lines]
@@ -128,8 +116,8 @@ _CAUSES = {
 
 
 def explain(e: GristError, config: Config, what: str = "") -> str:
-    """A readable message for a failed Grist call. `what` is "workspace" or "document" when
-    a 404 can be pinned on one. Names the host only: never credentials, path, query or key."""
+    """A readable message for a failed Grist call (`what`: "workspace" or "document" pins a
+    404). Names the host only: never credentials, path, query or key."""
     if e.status == 0:
         parts = urlsplit(config.grist_url)
         host = parts.hostname or ""
@@ -194,10 +182,8 @@ def _explaining(config: Config, what: str):
 
 
 def column_payload(column: schema.Column) -> dict:
-    """The REST body for creating one column.
-
-    `recalcDeps` is not part of it: Grist rejects it (and can corrupt the document) when sent
-    with the new column, so it is set in a second call, see `AddColumns.apply`."""
+    """The REST body for creating one column. `recalcDeps` is left out: Grist rejects it (and
+    can corrupt the document) with a new column, so `AddColumns.apply` sets it afterwards."""
     fields: dict = {"type": column.type}
     if column.label:
         fields["label"] = column.label
@@ -212,10 +198,6 @@ def column_payload(column: schema.Column) -> dict:
         if column.recalc_when is not None:
             fields["recalcWhen"] = column.recalc_when
     return {"id": column.id, "fields": fields}
-
-
-def table_payload(table: schema.Table, columns: Sequence[schema.Column]) -> dict:
-    return {"id": table.id, "columns": [column_payload(c) for c in columns]}
 
 
 def _refs(client: GristClient, table: str) -> dict[str, dict]:
@@ -235,24 +217,7 @@ def _check_ids(sent: Sequence[str], got: Sequence[str]) -> None:
 # Plan steps.
 
 
-def _table_name(table: str) -> str:
-    """A table as a user knows it: the summary table's generated id is not shown."""
-    return "the personal bests table" if table == schema.SUMMARY.id else table
-
-
 class Step:
-    def describe(self) -> str:
-        """What the step will do, for the plan."""
-        raise NotImplementedError
-
-    def created(self) -> str:
-        """What the step added, for the summary."""
-        raise NotImplementedError
-
-    def tables(self) -> tuple[str, ...]:
-        """Ids of the existing tables this step changes."""
-        return ()
-
     def apply(self, client: GristClient) -> None:
         raise NotImplementedError
 
@@ -262,33 +227,16 @@ class CreateTable(Step):
     table: schema.Table
     columns: tuple[schema.Column, ...]
 
-    def describe(self) -> str:
-        return f"Create table {self.table.id}"
-
-    def created(self) -> str:
-        return f"Created table {self.table.id}"
-
-    def tables(self) -> tuple[str, ...]:
-        return (self.table.id,)
-
     def apply(self, client: GristClient) -> None:
         sent = [self.table.id]
-        _check_ids(sent, client.add_tables([table_payload(self.table, self.columns)]))
+        payload = {"id": self.table.id, "columns": [column_payload(c) for c in self.columns]}
+        _check_ids(sent, client.add_tables([payload]))
 
 
 @dataclass(frozen=True)
 class AddColumns(Step):
     table: str
     columns: tuple[schema.Column, ...]
-
-    def describe(self) -> str:
-        return f"Add missing columns to {_table_name(self.table)}: {self._names()}"
-
-    def created(self) -> str:
-        return f"Added columns to {_table_name(self.table)}: {self._names()}"
-
-    def tables(self) -> tuple[str, ...]:
-        return (self.table,)
 
     def _names(self) -> str:
         return ", ".join(c.id for c in self.columns)
@@ -323,18 +271,6 @@ class SetVisibleCols(Step):
     table: str
     items: tuple[tuple[str, str, str], ...]  # (column id, target table id, target column id)
 
-    def describe(self) -> str:
-        return f"Show names instead of ids in {_table_name(self.table)}: {self._names()}"
-
-    def created(self) -> str:
-        return f"Showing names instead of ids in {_table_name(self.table)}: {self._names()}"
-
-    def tables(self) -> tuple[str, ...]:
-        return (self.table,)
-
-    def _names(self) -> str:
-        return ", ".join(i[0] for i in self.items)
-
     def apply(self, client: GristClient) -> None:
         have = _refs(client, self.table)
         targets: dict[str, dict[str, dict]] = {}
@@ -365,23 +301,11 @@ class SetVisibleCols(Step):
 
 @dataclass(frozen=True)
 class CreateSummaryPage(Step):
-    """Create the summary table through a view section on a new page.
-
-    Grist keeps a summary table only while a view section uses it. Grist reuses the table
-    if it already exists. Only runs when the page is missing; an existing page is never changed.
-    """
+    """Create the summary table through a view section on a new page (Grist keeps a summary
+    table only while a view section uses it, and reuses it if it exists). Only runs when the
+    page is missing."""
 
     summary: schema.Summary
-
-    def describe(self) -> str:
-        s = self.summary
-        return f"Create the {s.page!r} page with its summary table"
-
-    def created(self) -> str:
-        return f"Created the {self.summary.page!r} page with its summary table"
-
-    def tables(self) -> tuple[str, ...]:
-        return (self.summary.id,)
 
     def apply(self, client: GristClient) -> None:
         s = self.summary
@@ -414,6 +338,14 @@ def _event_names(events: Sequence[Mapping]) -> dict[int, str]:
     return {r["id"]: r["fields"].get("Name") for r in events}
 
 
+def _event_ids(events: Sequence[Mapping]) -> dict[str, int]:
+    """Normalised Event Name -> row id (the first row when names repeat)."""
+    ids: dict[str, int] = {}
+    for i, name in _event_names(events).items():
+        ids.setdefault(_norm(name), i)
+    return ids
+
+
 def _missing_events(events: Sequence[Mapping]) -> tuple[tuple[str, str], ...]:
     have = {_norm(n) for n in _event_names(events).values()}
     return tuple(e for e in schema.EXAMPLE_EVENTS if _norm(e[0]) not in have)
@@ -437,22 +369,12 @@ def _missing_implements(
 @dataclass(frozen=True)
 class SeedEvents(Step):
     """Add the default Events (from `names`, or all when None) whose Name is not there yet.
-    `add_names` and `have`: what the plan found missing and how many were already there (for
-    its wording only)."""
+    `add_names`, `have` and `for_demo` only shape the plan's wording."""
 
     names: tuple[str, ...] | None = None
     add_names: tuple[str, ...] = ()
     have: int = 0
-    for_demo: bool = False  # the subset is also needed by the demo data (wording only)
-
-    def describe(self) -> str:
-        return "Add the default Events that are missing"
-
-    def created(self) -> str:
-        return "Added the default Events"
-
-    def tables(self) -> tuple[str, ...]:
-        return ("Events",)
+    for_demo: bool = False
 
     def apply(self, client: GristClient) -> None:
         # Re-read: the plan was shown before confirmation, and Grist can be edited meanwhile.
@@ -469,26 +391,15 @@ class SeedEvents(Step):
 @dataclass(frozen=True)
 class SeedImplements(Step):
     """Add the sample Implements whose Event, Grade and Division is not there yet. `add` and
-    `have`: how many the plan found missing and already there (for its wording only)."""
+    `have` only shape the plan's wording."""
 
     add: int = 0
     have: int = 0
 
-    def describe(self) -> str:
-        return "Add the sample Implements that are missing"
-
-    def created(self) -> str:
-        return "Added the sample Implements"
-
-    def tables(self) -> tuple[str, ...]:
-        return ("Implements",)
-
     def apply(self, client: GristClient) -> None:
         events = client.records("Events")
         rows = _missing_implements(events, client.records("Implements"))
-        ids = {}
-        for i, name in _event_names(events).items():
-            ids.setdefault(_norm(name), i)
+        ids = _event_ids(events)
         add = []
         for event, grade, division, weight in rows:
             if _norm(event) not in ids:
@@ -518,14 +429,8 @@ def _require_empty(client: GristClient, tables: Collection[str], note: str = "")
 
 @dataclass(frozen=True)
 class LoadDemoData(Step):
-    """Add the fictional athletes, meets and results.
-
-    Results go in with Athlete and Event in one call, so Grade, Division and Implement resolve from
-    their trigger formulas. Needs the Events (and Implements) it uses from the steps before.
-    """
-
-    def describe(self) -> str:
-        return f"Add demo data ({self._counts()}; only if those tables are empty)"
+    """Add the fictional athletes, meets and results, in one call so Grade, Division and
+    Implement resolve from their trigger formulas. Needs the Events it uses from earlier steps."""
 
     def _counts(self) -> str:
         return (
@@ -533,17 +438,9 @@ class LoadDemoData(Step):
             f"{len(schema.DEMO_RESULTS)} results"
         )
 
-    def created(self) -> str:
-        return "Added demo data"
-
-    def tables(self) -> tuple[str, ...]:
-        return DEMO_TABLES
-
     def apply(self, client: GristClient) -> None:
         _require_empty(client, DEMO_TABLES)  # re-read: the document can change after the plan
-        events: dict[str, int] = {}
-        for i, name in _event_names(client.records("Events")).items():
-            events.setdefault(_norm(name), i)
+        events = _event_ids(client.records("Events"))
         wanted = {_norm(r[1]) for r in schema.DEMO_RESULTS}
         if missing := sorted(wanted - events.keys()):
             raise InitError(f"Events has no row named {', '.join(missing)}; cannot add demo data")
@@ -588,14 +485,8 @@ class LoadDemoData(Step):
 @dataclass
 class Plan:
     steps: list[Step] = field(default_factory=list)
-    present: list[str] = field(default_factory=list)  # contract tables in the document at the start
     notes: list[str] = field(default_factory=list)  # reported, never acted on
     conflicts: list[str] = field(default_factory=list)  # case-only id clashes: the run fails
-
-    def unchanged(self) -> list[str]:
-        """Present tables that no step touches: they existed and needed nothing."""
-        touched = {t for s in self.steps for t in s.tables()}
-        return [t for t in self.present if t not in touched]
 
 
 def _is_plain(column: schema.Column) -> bool:
@@ -606,9 +497,14 @@ def _unset(fields: Mapping) -> bool:
     return not fields.get("visibleCol")
 
 
+def _known_ids() -> set[str]:
+    """Lower-cased ids of the contract tables and the PB summary table."""
+    return {t.id.lower() for t in schema.TABLES} | {schema.SUMMARY.id.lower()}
+
+
 def unrelated_tables(actual_tables: Sequence[Mapping]) -> list[str]:
     """Ids of tables that are neither in the contract nor summary tables (ids ignore case)."""
-    known = {t.id.lower() for t in schema.TABLES} | {schema.SUMMARY.id.lower()}
+    known = _known_ids()
     return [
         t["id"]
         for t in actual_tables
@@ -620,14 +516,14 @@ def unrelated_tables(actual_tables: Sequence[Mapping]) -> list[str]:
 
 def contract_table_ids(actual_tables: Sequence[Mapping]) -> list[str]:
     """Ids of the contract tables and the PB summary table that are in the document."""
-    known = {t.id.lower() for t in schema.TABLES} | {schema.SUMMARY.id.lower()}
+    known = _known_ids()
     return [t["id"] for t in actual_tables if t["id"].lower() in known]
 
 
 def _visible_items(
     table: schema.Table, have: Mapping[str, Mapping] | None
 ) -> tuple[tuple[str, str, str], ...]:
-    """Ref columns of `table` that should show names: all, or those with `visibleCol` unset."""
+    """Ref columns of `table` that should show names (those with `visibleCol` unset)."""
     return tuple(
         (c.id, c.ref_table, c.visible_col)
         for c in table.columns
@@ -638,7 +534,7 @@ def _visible_items(
 def _diff_columns(
     plan: Plan, table: schema.Table, actual_cols: Mapping[str, Mapping]
 ) -> list[schema.Column]:
-    """Return the contract columns missing from `actual_cols`; record notes and conflicts."""
+    """The contract columns missing from `actual_cols`; notes and conflicts go on `plan`."""
     have = {c.lower(): c for c in actual_cols}
     missing = []
     for c in table.columns:
@@ -665,21 +561,14 @@ def build_plan(
     demo_data: bool = False,
     seed_events: bool = False,
 ) -> Plan:
-    """Diff the contract against `actual`; additions only.
+    """Diff the contract against `actual` (table id -> {column id: fields}); additions only.
 
-    `actual` maps table id -> {column id: column fields} for the contract tables and the
-    summary table that are in the document. `pages` are the page names that exist and
-    `summary_tables` the ids of real summary tables. `events` and `implements` are the
-    existing rows of those tables (None: the table does not exist yet). Seeds are opt-in and
-    each adds only what it needs: `seed_events` the whole default event list,
-    `seed_implements` the missing sample Implements and only the events their rows use,
-    `demo_data` the demo rows and only the events they and the Implements use. `demo_data`
-    adds the demo step last; the caller checks that the tables are empty.
-
-    Grist keeps ids unique ignoring case, so ids are matched ignoring case. A case-only
-    difference is never added or renamed: it is a conflict the owner must fix in Grist.
+    `pages` and `summary_tables` are the page names and real summary table ids; `events` and
+    `implements` the existing rows (None: no such table yet). Each seed adds only what it
+    needs; `demo_data` adds its step last and the caller checks the tables are empty. Ids are
+    matched ignoring case: a case-only difference is a conflict for the owner to fix in Grist.
     """
-    plan = Plan(present=sorted(actual))
+    plan = Plan()
     tables = {t.lower(): t for t in actual}
     formula_steps: list[Step] = []
     visible_steps: list[Step] = []
@@ -726,8 +615,7 @@ def implement_event_names() -> tuple[str, ...]:
 
 
 def _needed_events(seed_events: bool, seed_implements: bool, demo_data: bool) -> tuple[str, ...]:
-    """The default events a run adds: all of them for `--seed-events`, otherwise only the ones
-    the Implements rows and the demo results use."""
+    """The default events a run adds: all for `--seed-events`, else those the seeds use."""
     if seed_events:
         return tuple(n for n, _ in schema.EXAMPLE_EVENTS)
     wanted: set[str] = set()
@@ -746,7 +634,7 @@ def _plan_seeds(
     implements_too: bool,
     demo: bool = False,
 ) -> None:
-    """Seeds are opt-in and add only the default Events `needed` (and missing)."""
+    """Add only the default Events `needed` that are missing, and the Implements if asked."""
     missing_events = tuple(e for e in _missing_events(events) if e[0] in needed)
     if missing_events:
         plan.steps.append(
@@ -807,10 +695,9 @@ GROUPS = ("Tables", "Calculated columns", "Personal bests", "Display", "Pre-load
 def grouped(
     steps: Sequence[Step], past: bool = False, hidden: bool = False
 ) -> list[tuple[str, list[str]]]:
-    """Group steps by outcome, in plain words. `past`: what was done, not what will be.
-
-    The behind-the-scenes steps (calculated columns, names shown in Ref columns) are left
-    out unless `hidden`: the plan does not mention them, but a failure report must."""
+    """Group steps by outcome, in plain words (`past`: what was done). The behind-the-scenes
+    steps (calculated columns, names in Ref columns) show only when `hidden`: a failure report
+    needs them, the plan does not."""
     out: dict[str, list[str]] = {g: [] for g in GROUPS}
     behind_the_scenes = False
     page_made = any(isinstance(s, CreateSummaryPage) for s in steps)
@@ -875,9 +762,8 @@ def _seed_text(noun: str, add: int, have: int, past: bool) -> str:
 
 
 def _seed_events_text(step: "SeedEvents", past: bool) -> str:
-    """ "Add the 18 default events" / "Add 5 default events (13 already there)" when the full
-    list is in play, otherwise the few events the other seeds need: "Add 2 events required
-    for the sample implements (Discus and Shot Put)"."""
+    """The full list as `_seed_text`, otherwise the few events the other seeds need: "Add 2
+    events required for the sample implements (Discus and Shot Put)"."""
     add = len(step.add_names)
     if step.names is None or len(step.names) == len(schema.EXAMPLE_EVENTS):
         return _seed_text("default event", add, step.have, past)
@@ -901,8 +787,7 @@ def _and(items: Sequence[str]) -> str:
 
 
 def done_message(applied: Sequence[Step], doc: tuple[str, str] | None) -> str:
-    """One plain sentence for a run that went as planned. `doc`: (name, workspace label) of
-    the document this run created."""
+    """One sentence for a run that went as planned. `doc`: (name, workspace) if created."""
     tables = [s.table.id for s in applied if isinstance(s, CreateTable)]
     pages = [s.summary.page for s in applied if isinstance(s, CreateSummaryPage)]
     columns = [
@@ -937,8 +822,14 @@ def group_lines(groups: Sequence[tuple[str, Sequence[str]]]) -> list[str]:
 
 
 def _section(out, title: str) -> None:
-    """A heading that separates the parts of a run (plain text, readable in a log)."""
+    """A plain-text heading between the parts of a run."""
     print(f"\n--- {title} ---", file=out)
+
+
+def _print_bullets(heading: str, items: Sequence[str], out) -> None:
+    print(heading, file=out)
+    for item in items:
+        print(f"  - {item}", file=out)
 
 
 def _print_groups(groups: Sequence[tuple[str, Sequence[str]]], out) -> None:
@@ -950,15 +841,13 @@ def _print_groups(groups: Sequence[tuple[str, Sequence[str]]], out) -> None:
 
 
 class NameTaken(InitError):
-    """A document with that name already exists in the workspace. A second one is never
-    created; an interactive yes sets the existing one up instead."""
+    """A document with that name already exists in the workspace; a second is never created."""
 
     def __init__(self, existing: str, label: str):
         super().__init__(
             f"A document named {existing!r} already exists in {label}. Pick another name with "
             "--name, or run without --create using GRIST_DOC_ID to set that one up."
         )
-        self.existing, self.label = existing, label
 
 
 def existing_docs(client: GristClient, workspace_id: int) -> list[dict]:
@@ -998,9 +887,14 @@ def _workspace_docs(admin: GristClient, args: argparse.Namespace) -> list[dict]:
 # Workspace lookup.
 
 
-def resolve_workspace(client: GristClient, workspace: str, org: str | None = None) -> int:
-    """Return a workspace id from a numeric id or a name (optionally within one org)."""
-    return resolve_workspace_label(client, workspace, org)[0]
+def _orgs(client: GristClient, org: str | None) -> list[dict]:
+    """The organisations the key can see, narrowed to `org` (an id or name) when given."""
+    orgs = client.orgs()
+    if org is not None:
+        orgs = [o for o in orgs if str(o["id"]) == org or o.get("name") == org]
+        if not orgs:
+            raise InitError(ORG_NOT_FOUND.format(org=org))
+    return orgs
 
 
 def resolve_workspace_label(
@@ -1016,11 +910,7 @@ def resolve_workspace_label(
         except GristError:
             pass
         return int(workspace), f"workspace {workspace}"
-    orgs = client.orgs()
-    if org is not None:
-        orgs = [o for o in orgs if str(o["id"]) == org or o.get("name") == org]
-        if not orgs:
-            raise InitError(ORG_NOT_FOUND.format(org=org))
+    orgs = _orgs(client, org)
     matches = [w for o in orgs for w in client.workspaces(o["id"]) if w.get("name") == workspace]
     if not matches:
         raise InitError(
@@ -1040,7 +930,7 @@ def resolve_workspace_label(
 
 
 def parse_args(argv: Sequence[str] | None, can_ask: bool = False) -> argparse.Namespace:
-    """`can_ask`: in a terminal a missing --workspace is asked for, so it is not an error."""
+    """`can_ask`: in a terminal a missing --workspace is asked for, not an error."""
     p = argparse.ArgumentParser(
         prog="bestyet-init",
         description="Add the BestYet tables and columns to a Grist document. Only adds.",
@@ -1097,22 +987,7 @@ def parse_args(argv: Sequence[str] | None, can_ask: bool = False) -> argparse.Na
     )
     args = p.parse_args(argv)
     if args.check:
-        used = [
-            flag
-            for flag, on in (
-                ("--create", args.create),
-                ("--workspace", args.workspace),
-                ("--org", args.org),
-                ("--name", args.name),
-                ("--dry-run", args.dry_run),
-                ("--seed-events", args.seed_events),
-                ("--seed-implements", args.seed_implements),
-                ("--demo-data", args.demo_data),
-                ("--allow-existing-tables", args.allow_existing_tables),
-                ("--yes", args.yes),
-            )
-            if on
-        ]
+        used = _flags_given(args)
         if used:
             p.error(f"--check is read-only and cannot be combined with {', '.join(used)}")
     if not can_ask:  # in a terminal the questions fill in what is missing
@@ -1123,25 +998,39 @@ def parse_args(argv: Sequence[str] | None, can_ask: bool = False) -> argparse.Na
     return args
 
 
+def _flags_given(args: argparse.Namespace) -> list[str]:
+    """The options given other than --check, as typed."""
+    return [
+        flag
+        for flag, on in (
+            ("--create", args.create),
+            ("--workspace", args.workspace),
+            ("--org", args.org),
+            ("--name", args.name),
+            ("--dry-run", args.dry_run),
+            ("--seed-events", args.seed_events),
+            ("--seed-implements", args.seed_implements),
+            ("--demo-data", args.demo_data),
+            ("--allow-existing-tables", args.allow_existing_tables),
+            ("--yes", args.yes),
+        )
+        if on
+    ]
+
+
 def _tty(stream) -> bool:
     isatty = getattr(stream, "isatty", None)
     return bool(isatty and isatty())
 
 
 def wants_guided(args: argparse.Namespace, stdin, stdout) -> bool:
-    """Guided mode: in a terminal, with no option at all, or with a required value missing
-    (`--create` without `--workspace`, `--workspace` or `--org` without `--create`)."""
+    """Guided mode: in a terminal with no option, or with a required value missing."""
     if not (_tty(stdin) and _tty(stdout)) or args.check:
         return False
-    others = (
-        args.create, args.workspace, args.org, args.name, args.dry_run,
-        args.seed_events, args.seed_implements, args.allow_existing_tables, args.yes,
-        args.demo_data,
-    )  # fmt: skip
     incomplete = (args.create and not args.workspace) or (
         (args.workspace or args.org) and not args.create
     )
-    return not any(others) or bool(incomplete)
+    return not _flags_given(args) or bool(incomplete)
 
 
 DEFAULT_TABLE = "Table1"  # Grist puts an empty table with columns A, B, C in every new document
@@ -1166,18 +1055,28 @@ def rerun_hint(doc_id: str) -> str:
     )
 
 
+def _fix_and_settings(rerun_safe: bool, doc_id: str | None, old_doc_id: str) -> list[str]:
+    """The first next steps after a failure: fix the cause, and the settings step if the
+    document being set up is not the one in GRIST_DOC_ID."""
+    steps = [
+        "Fix the cause shown under Error, if you can."
+        if rerun_safe
+        else "Fix the problem described under Error in Grist."
+    ]
+    if doc_id:
+        steps.append("{}: {}".format(*settings_step(doc_id, old_doc_id)[:2]))
+    return steps
+
+
 def next_steps_after_create(
     doc_id: str, rerun_safe: bool, old_doc_id: str = "", table1_left: bool = False
 ) -> list[str]:
     """What to do when a run stopped after the document was created."""
-    steps = [
-        "Fix the cause shown under Error, if you can."
-        if rerun_safe
-        else "Fix the problem described under Error in Grist.",
-        "{}: {}".format(*settings_step(doc_id, old_doc_id)[:2]),
+    steps = _fix_and_settings(rerun_safe, doc_id, old_doc_id)
+    steps.append(
         "Then run bestyet-init again (without --create)"
-        + ("; it only adds what is missing." if rerun_safe else "."),
-    ]
+        + ("; it only adds what is missing." if rerun_safe else ".")
+    )
     if table1_left:
         steps.append(
             f"If {DEFAULT_TABLE} is still in the document, add --allow-existing-tables to that run."
@@ -1188,11 +1087,8 @@ def next_steps_after_create(
 
 
 def default_table_state(client: GristClient) -> tuple[bool, str | None]:
-    """Return (present, problem): is Table1 there, and why it must not be removed (if so).
-
-    It may only be removed when it is the only user table, has only Grist's default columns
-    and has no rows.
-    """
+    """Return (present, problem): is Table1 there, and why it must not be removed. It may go
+    only when it is the only user table, has only Grist's default columns and has no rows."""
     tables = client.tables()
     user = [t["id"] for t in tables if t["id"] in unrelated_tables(tables)]
     if DEFAULT_TABLE not in user:
@@ -1209,11 +1105,8 @@ def default_table_state(client: GristClient) -> tuple[bool, str | None]:
 
 
 def remove_default_table(client: GristClient) -> tuple[bool, str | None]:
-    """Remove Grist's untouched, empty default table. Returns (removed, warning).
-
-    Only for a document this run created. The conditions are checked here and again right
-    before the removal; nothing else is ever removed.
-    """
+    """Remove Grist's untouched, empty default table; returns (removed, warning). Only for a
+    document this run created; the conditions are checked twice and nothing else is removed."""
     for _ in range(2):
         present, problem = default_table_state(client)
         if not present:
@@ -1265,8 +1158,7 @@ def _ask_yes_no(out, question: str, stdin, default: bool = False) -> bool:
 def _ask_choice(
     out, question: str, options: Sequence[str], stdin, create_option: bool = False
 ) -> int | None:
-    """Numbered list; returns the 0-based index of the chosen option. With `create_option`
-    the answer C (create a new document) is accepted too and returned as None."""
+    """Numbered list; returns the 0-based index chosen (None for C with `create_option`)."""
     print(question, file=out)
     for i, option in enumerate(options, 1):
         print(f"  {i}. {option}", file=out)
@@ -1285,13 +1177,9 @@ def _ask_choice(
 
 
 def _choose_workspace(client: GristClient, org: str | None, out, stdin) -> str | None:
-    """Offer the workspaces the key can see; returns the chosen id as a string, or None when
-    the only one visible is declined. A lone workspace is never taken silently."""
-    orgs = client.orgs()
-    if org is not None:
-        orgs = [o for o in orgs if str(o["id"]) == org or o.get("name") == org]
-        if not orgs:
-            raise InitError(ORG_NOT_FOUND.format(org=org))
+    """Offer the visible workspaces; returns the chosen id, or None when the only one is
+    declined (a lone workspace is never taken silently)."""
+    orgs = _orgs(client, org)
     several = len(orgs) > 1
     found = [(o, w) for o in orgs for w in client.workspaces(o["id"])]
     if not found:
@@ -1313,9 +1201,8 @@ def _choose_workspace(client: GristClient, org: str | None, out, stdin) -> str |
 
 
 def guide(args: argparse.Namespace, config: Config, client_for, out, stdin) -> bool:
-    """Ask what to set up and fill in `args`. Returns False when the user chose to stop.
-
-    A flag that is already given skips its question. Nothing is changed here."""
+    """Ask what to set up and fill in `args` (a given flag skips its question); returns False
+    when the user stops. Nothing is changed here."""
     _section(out, "Questions")
     if not args.yes:
         print("Nothing is changed until you confirm the plan.\n", file=out)
@@ -1433,14 +1320,12 @@ def guide(args: argparse.Namespace, config: Config, client_for, out, stdin) -> b
 
 
 def _settings_id(config: Config, args: argparse.Namespace) -> str | None:
-    """The id to tell the user to put in their settings: set when the document being set up
-    is not the one GRIST_DOC_ID already points at."""
+    """The id for the user's settings, when the document is not the one GRIST_DOC_ID has."""
     return config.grist_doc_id if config.grist_doc_id != args.old_doc_id else None
 
 
 def settings_step(doc_id: str, old_doc_id: str) -> tuple[str, str, str | None]:
-    """The settings step of the next steps, in one place: (instruction, the line to put in
-    the settings, a closing note or None). Callers join them as they need."""
+    """The settings step: (instruction, the line for the settings, a closing note or None)."""
     assignment = f"GRIST_DOC_ID={doc_id}"
     if old_doc_id:
         update = (
@@ -1472,9 +1357,8 @@ def print_next_steps(
     events_hint: bool = False,
     implements_hint: bool = False,
 ) -> None:
-    """The closing Next steps: the settings step (when the document is not the one in
-    GRIST_DOC_ID), the events hint (when the full default list was not added), the implements
-    hint (when the sample implements were not added), then the --check pointer."""
+    """The closing Next steps: settings, events hint, implements hint, then the --check
+    pointer; numbered when there are several."""
     if not doc_id and not check and not events_hint and not implements_hint:
         return
     _section(out, "Next steps")
@@ -1662,11 +1546,7 @@ def _set_up_existing(client: GristClient, config: Config, args: argparse.Namespa
     try:
         _apply(plan, client, warnings, args, out, doc_id=args.settings_id)
     except PartialFailure as e:
-        steps = ["Fix the cause shown under Error, if you can."]
-        if not e.rerun_safe:
-            steps = ["Fix the problem described under Error in Grist."]
-        if args.settings_id:
-            steps.append("{}: {}".format(*settings_step(args.settings_id, args.old_doc_id)[:2]))
+        steps = _fix_and_settings(e.rerun_safe, args.settings_id, args.old_doc_id)
         if e.rerun_safe:
             steps.append("Then run bestyet-init again; it only adds what is missing.")
         raise ErrorReport(e.report(config, steps)) from None
@@ -1675,8 +1555,7 @@ def _set_up_existing(client: GristClient, config: Config, args: argparse.Namespa
 
 
 def _new_document_groups(plan: Plan, new_doc: tuple[str, str]) -> list[tuple[str, list[str]]]:
-    """The plan of a new document: its document, tables and page always come together, so
-    they share one heading; the rest (pre-loaded data) follows as usual."""
+    """A new document's tables and page share one heading; the rest follows as usual."""
     name, label = new_doc
     tables = [s.table.id for s in plan.steps if isinstance(s, CreateTable)]
     pages = [s.summary.page for s in plan.steps if isinstance(s, CreateSummaryPage)]
@@ -1689,16 +1568,17 @@ def _new_document_groups(plan: Plan, new_doc: tuple[str, str]) -> list[tuple[str
 def _show_plan(plan: Plan, new_doc: tuple[str, str] | None, args: argparse.Namespace, out) -> bool:
     """Print notes, conflicts and the whole plan. Returns False when there is nothing to do."""
     if plan.notes:
-        print(
+        _print_bullets(
             "Left as is (differs from the contract; this script never changes existing columns):",
-            file=out,
+            plan.notes,
+            out,
         )
-        for note in plan.notes:
-            print(f"  - {note}", file=out)
     if plan.conflicts:
-        print("Needs a manual fix in Grist (this script changes nothing for these):", file=out)
-        for conflict in plan.conflicts:
-            print(f"  - {conflict}", file=out)
+        _print_bullets(
+            "Needs a manual fix in Grist (this script changes nothing for these):",
+            plan.conflicts,
+            out,
+        )
     if not new_doc and not plan.steps:
         print(
             ("\n" if args.guided else "")
@@ -1742,14 +1622,14 @@ def _apply(
     doc_id: str | None = None,
     doc: tuple[str, str] | None = None,
 ) -> None:
-    """Apply the steps. `done` holds what was already done in this run (the document);
-    `doc` is the (name, workspace) of a document this run created."""
+    """Apply the steps. `done`: what this run already did; `doc`: the document it created."""
     applied: list[Step] = []
     for i, step in enumerate(plan.steps):
         try:
             step.apply(client)
         except (GristError, InitError) as e:
-            attention = [f"{w}. To fix: {next_step(args.allow_existing_tables)}" for w in warnings]
+            fix = next_step(args.allow_existing_tables)
+            attention = [f"{w}. To fix: {fix}" for w in warnings]
             raise PartialFailure(done, applied, plan.steps[i:], e, attention) from None
         applied.append(step)
     _finish(plan, warnings, args, out, doc_id, applied, doc)
@@ -1764,15 +1644,12 @@ def _finish(
     applied: Sequence[Step] | None = None,
     doc: tuple[str, str] | None = None,
 ) -> None:
-    """Print the closing message (after a run that applied changes), warnings and next steps.
-
-    `applied` is None when nothing was applied (dry run, declined, nothing to do)."""
+    """Print the closing message, warnings and next steps (`applied` None: nothing applied)."""
     if applied is not None:
         print(f"\n{done_message(applied, doc)}", file=out)
     if warnings:
-        print("Needs attention:", file=out)
-        for w in warnings:
-            print(f"  - {w}. To fix: {next_step(args.allow_existing_tables)}", file=out)
+        fix = next_step(args.allow_existing_tables)
+        _print_bullets("Needs attention:", [f"{w}. To fix: {fix}" for w in warnings], out)
     if plan.conflicts:
         raise InitError(
             "The document differs from the contract in ways this script does not change "
