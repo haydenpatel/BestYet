@@ -30,8 +30,8 @@ class PartialFailure(InitError):
     def __init__(
         self,
         done: Sequence[str],
-        applied: Sequence["Step"],
-        pending: Sequence["Step"],
+        applied: Sequence[Step],
+        pending: Sequence[Step],
         error: Exception,
         attention: Sequence[str] = (),
     ):
@@ -160,7 +160,7 @@ def _seed_text(noun: str, add: int, have: int, past: bool) -> str:
     return f"{verb} {add} {plural}{note}"
 
 
-def _seed_events_text(step: "SeedEvents", past: bool) -> str:
+def _seed_events_text(step: SeedEvents, past: bool) -> str:
     """The full list as `_seed_text`, otherwise the few events the other seeds need: "Add 2
     events required for the sample implements (Discus and Shot Put)"."""
     add = len(step.add_names)
