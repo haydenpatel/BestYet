@@ -282,7 +282,6 @@ def test_an_unreadable_grist_doc_id_does_not_stop_the_questions(
     out = capsys.readouterr().out
     assert "GRIST_DOC_ID is set but that document cannot be read." in out and reason in out
     assert "Choose another document below." in out
-    assert "Choose another document below." in out
     assert "Set up that document?" not in out and "Use workspace 'Work'?" in out
     assert fake.created_docs == [(10, "Doc")]
 
