@@ -362,6 +362,7 @@ def _fail_trigger_update(fake):
             _fail_trigger_update,
             [
                 "Created without its trigger dependency",
+                "A re-run leaves existing columns alone",
                 "Results.Grade, Results.Division, Results.Implement",
             ],
             "Calculated columns",
