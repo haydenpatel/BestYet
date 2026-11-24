@@ -4,6 +4,7 @@ import httpx
 import pytest
 from app_fixtures import CONFIG
 from fake_grist import KEY
+from werkzeug.exceptions import TooManyRequests
 
 from bestyet import create_app
 from bestyet.data import current_data
@@ -88,3 +89,41 @@ def test_unexpected_error_hides_the_traceback(app):
     assert "Something went wrong" in response.text
     assert "secret detail" not in response.text
     assert_clean(response)
+
+
+@pytest.mark.parametrize("status", [400, 429, 500])
+def test_upstream_text_is_not_shown_or_logged(status, caplog):
+    leak = "token-abc123def456 see https://" + "user:pass" + "@grist.example.test/o/x?k=" + KEY
+    app = app_on(httpx.MockTransport(lambda r: httpx.Response(status, json={"error": leak})))
+    response = app.test_client().get("/athletes")
+    assert response.status_code == 502
+    assert f"HTTP {status}" in response.text
+    for text in (response.text, caplog.text):
+        assert not any(bit in text for bit in ("abc123", "user:pass", KEY, "https://"))
+    assert "Grist request failed" in caplog.text
+
+
+def test_method_not_allowed_keeps_allow_header(web):
+    assert "GET" in web.post("/health").headers["Allow"]
+
+
+def test_retry_after_is_kept():
+    app = app_on(httpx.MockTransport(lambda r: httpx.Response(200)))
+
+    @app.get("/slow")
+    def slow():
+        raise TooManyRequests(retry_after=7)
+
+    response = app.test_client().get("/slow")
+    assert response.status_code == 429
+    assert response.headers["Retry-After"] == "7"
+
+
+def test_unexpected_errors_propagate_under_testing(app):
+    @app.get("/boom")
+    def boom():
+        raise RuntimeError("route bug")
+
+    app.testing = True
+    with pytest.raises(RuntimeError, match="route bug"):
+        app.test_client().get("/boom")

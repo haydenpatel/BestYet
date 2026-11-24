@@ -30,22 +30,24 @@ def create_app(
     """
     try:
         config = config or Config.from_env()
+    except ConfigError as e:
+        raise StartupError(str(e)) from None
+    # One client for the app's lifetime; it makes no request until it is used.
+    client = GristClient(
+        config.grist_url, config.grist_doc_id, config.grist_api_key, transport=transport
+    )
+    try:
         if verify:
-            with GristClient(
-                config.grist_url, config.grist_doc_id, config.grist_api_key, transport=transport
-            ) as client:
-                require_contract(client)
-    except (ConfigError, ContractError) as e:
+            require_contract(client)
+    except ContractError as e:
+        client.close()
         raise StartupError(str(e)) from None
     except GristError as e:
+        client.close()
         raise StartupError(f"Could not check the Grist document: {e}") from None
 
     app = Flask(__name__)
     app.config["BESTYET"] = config
-    # One client for the app's lifetime; it makes no request until a page reads data.
-    client = GristClient(
-        config.grist_url, config.grist_doc_id, config.grist_api_key, transport=transport
-    )
     app.extensions["bestyet_data"] = Data(client)
     errors.register(app, config)
 

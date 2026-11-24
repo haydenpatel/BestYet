@@ -115,3 +115,10 @@ def test_names_are_current_when_a_row_is_renamed(fake, data):
     fake.rows["Athletes"][0]["fields"]["Name"] = "Athlete Z"
     assert data.results()[0].athlete == "Athlete Z"
     assert {p.athlete for p in data.personal_bests()} >= {"Athlete Z"}
+
+
+def test_names_are_trimmed_as_lookups_trims_them(fake, data):
+    fake.rows["Athletes"][0]["fields"]["Name"] = " Athlete A "
+    fake.rows["Athletes"][1]["fields"]["Name"] = "   "
+    assert [a.name for a in data.athletes()] == ["Athlete A", "Athlete C"]
+    assert data.results()[0].athlete == "Athlete A"

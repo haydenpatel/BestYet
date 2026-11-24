@@ -70,8 +70,9 @@ class PersonalBest:
 
 
 def _text(value: object) -> str | None:
-    """A text cell, or None when it is empty or not text (such as a Grist error cell)."""
-    return value if isinstance(value, str) and value else None
+    """A text cell trimmed as `Lookups` trims names, or None when it is blank or not text
+    (such as a Grist error cell)."""
+    return value.strip() or None if isinstance(value, str) else None
 
 
 def _int(value: object) -> int | None:
