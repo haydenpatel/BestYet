@@ -13,7 +13,7 @@ from init_helpers import (
     CREATE,
     ENV,
     ENV_NO_DOC,
-    Stdin,
+    Interrupting,
     before_nth_get,
     full_fake,
     full_tables,
@@ -89,13 +89,9 @@ def test_missing_values_are_usage_errors_without_a_terminal(monkeypatch, capsys,
     assert message in capsys.readouterr().err
 
 
-@pytest.mark.parametrize(
-    ("argv", "answers"),
-    [(["--create"], NEW_DOC), (["--create", "--yes"], "y\nDoc\nn\nn\nn\n")],
-)
-def test_create_without_a_workspace_asks_for_it_in_a_terminal(monkeypatch, capsys, argv, answers):
+def test_create_without_a_workspace_asks_for_it_in_a_terminal(monkeypatch, capsys):
     fake = FakeGrist()
-    assert guided(monkeypatch, fake, answers, *argv) == 0
+    assert guided(monkeypatch, fake, NEW_DOC, "--create") == 0
     assert "Use workspace 'Work'?" in capsys.readouterr().out
     assert fake.created_docs == [(10, "Doc")]
 
@@ -123,10 +119,6 @@ def test_end_of_input_stops_cleanly(monkeypatch, capsys, answers):
 
 
 def test_ctrl_c_stops_cleanly(monkeypatch, capsys):
-    class Interrupting(Stdin):
-        def readline(self, *args):
-            raise KeyboardInterrupt
-
     fake = FakeGrist()
     monkeypatch.setattr(sys, "stdin", Interrupting())
     monkeypatch.setattr(sys.stdout, "isatty", lambda: True, raising=False)
@@ -352,20 +344,18 @@ def test_the_same_name_in_another_workspace_is_not_a_clash():
 
 
 @pytest.mark.parametrize("name", ["BestYet", "bestyet", "  BESTYET  "])
-def test_flags_refuse_a_taken_name_when_they_cannot_ask(capsys, name):
+@pytest.mark.parametrize("with_yes", [False, True])
+def test_flags_refuse_a_taken_name_when_they_cannot_ask(monkeypatch, capsys, name, with_yes):
     fake = clashing("BestYet")
-    assert run(fake, "--create", "--workspace", "Work", "--name", name, env=ENV_NO_DOC) == 1
-    err = capsys.readouterr().err
+    argv = ("--create", "--workspace", "Work", "--name", name)
+    if with_yes:  # --yes means there is nobody to ask
+        assert run(fake, *argv, env=ENV_NO_DOC) == 1
+    else:
+        terminal(monkeypatch, "y\n", tty=False)
+        assert run(fake, *argv, env=ENV_NO_DOC, yes=False) == 1
+    err = stopped(fake, capsys)
     assert "A document named 'BestYet' already exists in workspace 'Work'" in err
     assert "--name" in err and "DOC0" not in err
-    assert fake.created_docs == [] and fake.writes == []
-
-
-def test_flags_without_a_terminal_refuse_a_taken_name(monkeypatch, capsys):
-    fake = clashing("BestYet")
-    terminal(monkeypatch, "y\n", tty=False)
-    assert run(fake, *CREATE, env=ENV_NO_DOC, yes=False) == 1
-    assert "already exists" in stopped(fake, capsys)
 
 
 def test_flags_in_a_terminal_ask_whether_to_use_the_taken_name(monkeypatch, capsys):

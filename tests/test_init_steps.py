@@ -14,7 +14,6 @@ from init_helpers import (
     full_fake,
     full_tables,
     run,
-    server_error,
 )
 
 from bestyet import dates, marks, schema
@@ -426,22 +425,3 @@ def test_default_table_is_fully_rechecked_right_before_removal(capsys, change, r
     assert run(fake, *CREATE, env=ENV_NO_DOC) == 0
     assert "Table1" in fake.tables and removals(fake) == []
     assert f"Table1 not removed: {reason}" in capsys.readouterr().out
-
-
-def test_an_existing_document_keeps_its_default_table_and_says_why(capsys):
-    fake = FakeGrist({"Table1": DEFAULTS})
-    assert run(fake, "--allow-existing-tables") == 0
-    assert "Table1" in fake.tables and removals(fake) == []
-    assert (
-        capsys.readouterr().out.count(
-            "Table1 not removed: the document was not created by this run"
-        )
-        == 1
-    )
-
-
-def test_a_failed_default_table_removal_fails_the_run():
-    fake = FakeGrist()
-    server_error(fake, lambda r: r.url.path.endswith("/NEWDOC/apply"))
-    assert run(fake, *CREATE, env=ENV_NO_DOC) == 1
-    assert "Table1" in fake.tables

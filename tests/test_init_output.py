@@ -243,6 +243,7 @@ def test_default_table_warning_says_how_to_fix_it(capsys):
     fake = FakeGrist({"Table1": DEFAULTS})
     assert run(fake, "--allow-existing-tables") == 0
     out = capsys.readouterr().out
+    assert "Table1" in fake.tables and out.count("Table1 not removed: the document was not") == 1
     line = next(x for x in out.splitlines() if "To fix:" in x)
     assert "To fix: remove Table1 in Grist" in line and "--allow-existing-tables" not in line
     assert "Needs attention" in out
@@ -323,6 +324,7 @@ def test_failure_with_the_default_table_left_mentions_it_once(capsys):
     server_error(fake, lambda r: r.url.path.endswith("/NEWDOC/apply"))
     assert run(fake, *CREATE, env=ENV_NO_DOC) == 1
     err = capsys.readouterr().err
+    assert "Table1" in fake.tables
     steps = err.split("--- Next steps ---")[1]
     assert "4. If Table1 is still in the document" in steps and steps.count("Table1") == 1
     assert "--- Error ---" in err and "--allow-existing-tables" in err

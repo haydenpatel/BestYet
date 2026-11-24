@@ -35,6 +35,13 @@ class Stdin(io.StringIO):
         return self.tty
 
 
+class Interrupting(Stdin):
+    """Ctrl-C at the first question."""
+
+    def readline(self, *args):
+        raise KeyboardInterrupt
+
+
 def full_tables():
     """A fully initialised document: contract tables, summary table, names shown."""
     tables = {
@@ -85,6 +92,11 @@ def run(fake, *argv, env=ENV, yes=True):
     if yes:
         argv += ("--yes",)
     return main(list(argv), env, fake.transport)
+
+
+def answers_from(monkeypatch, text, tty=True):
+    """Script stdin only: stdout stays captured, so the guided mode does not start."""
+    monkeypatch.setattr(sys, "stdin", Stdin(text, tty=tty))
 
 
 def terminal(monkeypatch, text="", tty=True):
