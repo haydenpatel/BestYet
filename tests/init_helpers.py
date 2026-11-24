@@ -66,8 +66,8 @@ def full_fake(tables=None):
     fake = FakeGrist(tables if tables is not None else full_tables())
     if "Events" in fake.tables:
         fake.rows["Events"] = [
-            {"id": i, "fields": {"Name": n, "Kind": k}}
-            for i, (n, k) in enumerate(schema.EXAMPLE_EVENTS, 1)
+            {"id": i, "fields": {"Name": n, "Kind": k, "Category": c}}
+            for i, (n, k, c) in enumerate(schema.EXAMPLE_EVENTS, 1)
         ]
     fake.summary_tables.add(schema.SUMMARY.id)
     fake.views[1] = schema.SUMMARY.page

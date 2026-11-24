@@ -180,7 +180,7 @@ def _event_ids(events: Sequence[Mapping]) -> dict[str, int]:
     return ids
 
 
-def _missing_events(events: Sequence[Mapping]) -> tuple[tuple[str, str], ...]:
+def _missing_events(events: Sequence[Mapping]) -> tuple[tuple[str, str, str], ...]:
     have = {_norm(n) for n in _event_names(events).values()}
     return tuple(e for e in schema.EXAMPLE_EVENTS if _norm(e[0]) not in have)
 
@@ -219,7 +219,7 @@ class SeedEvents(Step):
             if wanted is None or _norm(e[0]) in wanted
         ]
         if rows:
-            client.add("Events", [{"Name": n, "Kind": k} for n, k in rows])
+            client.add("Events", [{"Name": n, "Kind": k, "Category": c} for n, k, c in rows])
 
 
 @dataclass(frozen=True)

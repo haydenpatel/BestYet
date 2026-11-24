@@ -299,8 +299,8 @@ def settings_step(doc_id: str, old_doc_id: str) -> tuple[str, str, str | None]:
 
 
 EVENTS_HINT = (
-    "Add your events by hand in the Events table in Grist (Name, and Kind: Time or "
-    "Distance); without events you cannot record results."
+    "Add your events by hand in the Events table in Grist (Name, Kind: Time or "
+    "Distance, and Category); without events you cannot record results."
 )
 
 

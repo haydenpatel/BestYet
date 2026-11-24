@@ -124,7 +124,7 @@ def _implements_but_one():
             [f"Add the {N_EVENTS} default events"],
         ),
         (
-            _missing(*[n for n, _ in schema.EXAMPLE_EVENTS[-5:]]),
+            _missing(*[n for n, *_ in schema.EXAMPLE_EVENTS[-5:]]),
             ("--seed-events",),
             [f"Add 5 default events ({N_EVENTS - 5} already there)"],
             [],

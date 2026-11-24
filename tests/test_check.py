@@ -48,6 +48,12 @@ def test_every_difference_is_reported():
     assert len(found) == 4
 
 
+def test_missing_events_category_is_named():
+    fake = initialised()
+    del fake.tables["Events"]["Category"]
+    assert differences(fake) == ["Events: column 'Category' is missing"]
+
+
 def test_missing_division_column_is_named_and_labels_are_not_checked():
     fake = initialised()
     del fake.tables["Athletes"]["Division"]

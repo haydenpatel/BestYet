@@ -13,6 +13,7 @@ from init_helpers import (
     event_names,
     full_fake,
     full_tables,
+    incomplete_fake,
     run,
 )
 
@@ -96,6 +97,8 @@ def test_ref_columns_show_names(fresh):
 def test_choices_and_the_default_division_label(fresh):
     kind = json.loads(fresh.tables["Events"]["Kind"]["widgetOptions"])
     assert kind == {"choices": ["Time", "Distance"]}
+    category = json.loads(fresh.tables["Events"]["Category"]["widgetOptions"])
+    assert category == {"choices": list(schema.EVENT_CATEGORIES)}
     grade = json.loads(fresh.tables["Athletes"]["Grade"]["widgetOptions"])
     assert grade["choices"] == list(schema.DEFAULT_GRADE_CHOICES)
     assert fresh.tables["Athletes"]["Division"]["label"] == "Default division"
@@ -195,9 +198,38 @@ def test_renamed_ids_stop_with_an_error():
 def test_seed_events_adds_only_the_events():
     fake = FakeGrist()
     assert run(fake, "--seed-events") == 0
-    rows = [(r["fields"]["Name"], r["fields"]["Kind"]) for r in fake.rows["Events"]]
+    rows = [
+        (r["fields"]["Name"], r["fields"]["Kind"], r["fields"]["Category"])
+        for r in fake.rows["Events"]
+    ]
     assert rows == list(schema.EXAMPLE_EVENTS)
     assert "Implements" not in fake.rows
+
+
+def test_seeded_events_get_their_category_and_existing_ones_keep_theirs():
+    fake = full_fake()
+    fake.rows["Events"] = [
+        {"id": 1, "fields": {"Name": "Discus", "Kind": "Distance", "Category": "Jumps"}},
+        {"id": 2, "fields": {"Name": "100m", "Kind": "Time"}},  # blank: left blank
+    ]
+    assert run(fake, "--seed-events") == 0
+    by_name = {r["fields"]["Name"]: r["fields"].get("Category") for r in fake.rows["Events"]}
+    assert by_name["Discus"] == "Jumps" and by_name["100m"] is None
+    assert by_name["Shot Put"] == "Throws" and by_name["800m"] == "Middle distance"
+    for sample in (("--seed-implements",), ("--demo-data",)):  # these add their events with one too
+        fake = FakeGrist()
+        assert run(fake, *sample) == 0
+        assert all(r["fields"]["Category"] for r in fake.rows["Events"])
+
+
+def test_missing_category_column_is_added_and_a_rerun_changes_nothing():
+    fake = incomplete_fake(table="Events", column="Category")
+    assert run(fake) == 0
+    assert fake.tables["Events"]["Category"]["type"] == "Choice"
+    assert run(fake) == 0
+    assert [w for w in fake.writes if "columns" in w[1]] == [
+        ("POST", f"/api/docs/{DOC}/tables/Events/columns")
+    ]
 
 
 def test_seed_implements_adds_the_events_it_uses_and_resolves_their_ids():
@@ -295,7 +327,7 @@ def test_demo_data_is_obviously_fake_and_valid():
     names = {n for n, _, _ in schema.DEMO_ATHLETES}
     assert all(n.startswith("Athlete ") for n in names)
     assert all(m[0].startswith("Demo ") for m in schema.DEMO_MEETS)
-    events = {n for n, _ in schema.EXAMPLE_EVENTS}
+    events = {n for n, *_ in schema.EXAMPLE_EVENTS}
     meets = {m[0] for m in schema.DEMO_MEETS}
     for athlete, event, meet, mark, _ in schema.DEMO_RESULTS:
         assert athlete in names and event in events and meet in meets
