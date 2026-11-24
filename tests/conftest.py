@@ -4,6 +4,8 @@ import pytest
 from bestyet.config import Config
 from bestyet.grist import GristClient
 
+pytest_plugins = ["app_fixtures"]
+
 
 def pytest_collection_modifyitems(config, items):
     """Integration tests are skipped unless BESTYET_INTEGRATION is set (never in CI)."""

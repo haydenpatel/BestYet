@@ -4,8 +4,10 @@ import click
 import httpx
 from flask import Flask, render_template
 
+from bestyet import errors
 from bestyet.check import ContractError, require_contract
 from bestyet.config import Config, ConfigError
+from bestyet.data import Data
 from bestyet.grist import GristClient, GristError
 
 
@@ -40,6 +42,12 @@ def create_app(
 
     app = Flask(__name__)
     app.config["BESTYET"] = config
+    # One client for the app's lifetime; it makes no request until a page reads data.
+    client = GristClient(
+        config.grist_url, config.grist_doc_id, config.grist_api_key, transport=transport
+    )
+    app.extensions["bestyet_data"] = Data(client)
+    errors.register(app, config)
 
     @app.get("/health")
     def health():
