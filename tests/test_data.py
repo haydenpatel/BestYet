@@ -38,19 +38,13 @@ def test_meets_have_dates(data):
     ]
 
 
-def test_events_without_a_category_column(data):
+def test_events_have_a_category(fake, data):
+    fake.rows["Events"][1]["fields"]["Category"] = None  # an empty cell
     events = data.events()
     assert len(events) == len(schema.EXAMPLE_EVENTS)
-    assert [(e.name, e.kind) for e in events[:1]] == [schema.EXAMPLE_EVENTS[0]]
-    assert {e.category for e in events} == {None}
-
-
-def test_events_with_a_category_column(app, fake, data):
-    fake.tables["Events"]["Category"] = {"type": "Choice"}
-    fake.rows["Events"][0]["fields"]["Category"] = "Sprints"
-    events = data.events()
-    assert events[0].category == "Sprints"
-    assert events[1].category is None  # an empty cell
+    name, kind, category = schema.EXAMPLE_EVENTS[0]
+    assert (events[0].name, events[0].kind, events[0].category) == (name, kind, category)
+    assert events[1].category is None
 
 
 def test_results_resolve_names_and_keep_grist_computed_cells(data):

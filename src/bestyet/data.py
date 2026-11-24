@@ -1,8 +1,8 @@
 """Read-only access to the BestYet tables, with Ref ids resolved to names.
 
 Grist owns the logic: `Value`, `Date` and `IsPB` on Results and `Best` on the PB summary table
-are read as Grist computed them, never recalculated here. A cell Grist could not compute, or a
-column the document does not have (such as `Events.Category` before it is added), reads as None.
+are read as Grist computed them, never recalculated here. A cell Grist could not compute, or an
+empty one, reads as None.
 """
 
 from dataclasses import dataclass
@@ -101,9 +101,9 @@ class Data:
         ]
 
     def events(self) -> list[Event]:
-        """Events with their `Category`, which is None for all of them if the column is absent."""
+        """Events with their `Category` (None while it is empty)."""
         return [
-            Event(r["id"], name, _text(f.get("Kind")), _text(f.get("Category")))
+            Event(r["id"], name, _text(f.get("Kind")), _text(f["Category"]))
             for r in self._client.records("Events")
             if (name := _text((f := r["fields"]).get("Name")))
         ]
