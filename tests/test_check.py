@@ -1,6 +1,6 @@
 import pytest
 from fake_grist import BASE, DOC, KEY, FakeGrist
-from test_init_grist import ENV, run, source_files
+from init_helpers import ENV, run, source_files
 
 from bestyet import StartupError, create_app, schema
 from bestyet.check import ContractError, check_document, has_page, page_names, require_contract
