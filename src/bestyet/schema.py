@@ -93,6 +93,8 @@ if not vals:
 return min(vals) if $Event.Kind == "Time" else max(vals)"""
 
 EVENT_KINDS = ("Time", "Distance")
+# Event categories. The app groups events by them; a blank category shows as "Other".
+EVENT_CATEGORIES = ("Sprints", "Middle distance", "Hurdles", "Jumps", "Throws")
 
 # Choices are deployment data: the contract only requires Grade to be a Choice.
 # The init script uses these when it creates the column.
@@ -118,6 +120,7 @@ TABLES = (
         (
             Column("Name", "Text"),
             Column("Kind", "Choice", choices=EVENT_KINDS),
+            Column("Category", "Choice", choices=EVENT_CATEGORIES),
         ),
     ),
     Table(
@@ -198,26 +201,26 @@ WRITABLE_RESULTS_COLUMNS = (
 # Computed by Grist, read only: never write these.
 COMPUTED_RESULTS_COLUMNS = ("Value", "Date", "IsPB")
 
-# Example Events seed from SPEC.md: (name, kind).
+# Example Events seed from SPEC.md: (name, kind, category).
 EXAMPLE_EVENTS = (
-    ("60m", "Time"),
-    ("80m", "Time"),
-    ("100m", "Time"),
-    ("200m", "Time"),
-    ("400m", "Time"),
-    ("800m", "Time"),
-    ("1500m", "Time"),
-    ("3000m", "Time"),
-    ("80m Hurdles", "Time"),
-    ("100m Hurdles", "Time"),
-    ("Long Jump", "Distance"),
-    ("High Jump", "Distance"),
-    ("Triple Jump", "Distance"),
-    ("Shot Put", "Distance"),
-    ("Discus", "Distance"),
-    ("Javelin", "Distance"),
-    ("Turbo Javelin", "Distance"),
-    ("Vortex", "Distance"),
+    ("60m", "Time", "Sprints"),
+    ("80m", "Time", "Sprints"),
+    ("100m", "Time", "Sprints"),
+    ("200m", "Time", "Sprints"),
+    ("400m", "Time", "Sprints"),
+    ("800m", "Time", "Middle distance"),
+    ("1500m", "Time", "Middle distance"),
+    ("3000m", "Time", "Middle distance"),
+    ("80m Hurdles", "Time", "Hurdles"),
+    ("100m Hurdles", "Time", "Hurdles"),
+    ("Long Jump", "Distance", "Jumps"),
+    ("High Jump", "Distance", "Jumps"),
+    ("Triple Jump", "Distance", "Jumps"),
+    ("Shot Put", "Distance", "Throws"),
+    ("Discus", "Distance", "Throws"),
+    ("Javelin", "Distance", "Throws"),
+    ("Turbo Javelin", "Distance", "Throws"),
+    ("Vortex", "Distance", "Throws"),
 )
 
 # Sample Implements rows (optional seed): (event name, grade, division, weight). Sample values

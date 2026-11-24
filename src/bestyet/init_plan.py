@@ -135,13 +135,13 @@ def implement_event_names() -> tuple[str, ...]:
 def _needed_events(seed_events: bool, seed_implements: bool, demo_data: bool) -> tuple[str, ...]:
     """The default events a run adds: all for `--seed-events`, else those the seeds use."""
     if seed_events:
-        return tuple(n for n, _ in schema.EXAMPLE_EVENTS)
+        return tuple(n for n, *_ in schema.EXAMPLE_EVENTS)
     wanted: set[str] = set()
     if seed_implements or demo_data:
         wanted |= {_norm(n) for n in implement_event_names()}
     if demo_data:
         wanted |= {_norm(r[1]) for r in schema.DEMO_RESULTS}
-    return tuple(n for n, _ in schema.EXAMPLE_EVENTS if _norm(n) in wanted)
+    return tuple(n for n, *_ in schema.EXAMPLE_EVENTS if _norm(n) in wanted)
 
 
 def _plan_seeds(
@@ -158,7 +158,7 @@ def _plan_seeds(
         plan.steps.append(
             SeedEvents(
                 tuple(needed),
-                tuple(n for n, _ in missing_events),
+                tuple(n for n, *_ in missing_events),
                 len(needed) - len(missing_events),
                 demo,
             )

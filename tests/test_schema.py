@@ -110,16 +110,20 @@ def test_summary_spec():
 
 
 def test_events_seed():
-    names = [n for n, _ in schema.EXAMPLE_EVENTS]
+    names = [n for n, *_ in schema.EXAMPLE_EVENTS]
     assert len(names) == len(set(names))
-    assert {k for _, k in schema.EXAMPLE_EVENTS} <= set(schema.EVENT_KINDS)
+    assert {k for _, k, _ in schema.EXAMPLE_EVENTS} <= set(schema.EVENT_KINDS)
+    assert {c for *_, c in schema.EXAMPLE_EVENTS} == set(schema.EVENT_CATEGORIES)
     seed_line = re.search(r"Example seed: (.+)\.", SPEC).group(1)
     assert names == seed_line.split(", ")
     assert schema.table("Events").columns[1].choices == ("Time", "Distance")
+    category = schema.table("Events").columns[2]
+    assert (category.id, category.type) == ("Category", "Choice")
+    assert category.choices == schema.EVENT_CATEGORIES
 
 
 def test_implements_seed_references_seed_events():
-    names = {n for n, _ in schema.EXAMPLE_EVENTS}
+    names = {n for n, *_ in schema.EXAMPLE_EVENTS}
     for event, grade, division, weight in schema.SAMPLE_IMPLEMENTS:
         assert event in names
         assert grade and division and weight
