@@ -108,3 +108,10 @@ def test_the_layer_never_writes(fake, data):
 def test_data_can_be_built_from_a_client_alone(fake):
     client = GristClient(BASE, DOC, Secret(KEY), transport=fake.transport)
     assert len(Data(client).athletes()) == 3
+
+
+def test_names_are_current_when_a_row_is_renamed(fake, data):
+    assert data.results()[0].athlete == "Athlete A"
+    fake.rows["Athletes"][0]["fields"]["Name"] = "Athlete Z"
+    assert data.results()[0].athlete == "Athlete Z"
+    assert {p.athlete for p in data.personal_bests()} >= {"Athlete Z"}

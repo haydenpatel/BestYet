@@ -115,6 +115,7 @@ class Data:
         ]
 
     def results(self) -> list[Result]:
+        self._lookups.invalidate()  # names as they are now, not as cached up to 30 s ago
         out = []
         for r in self._client.records("Results"):
             f = r["fields"]
@@ -142,6 +143,7 @@ class Data:
 
     def personal_bests(self) -> list[PersonalBest]:
         """One row per athlete, event and implement, as Grist's summary table holds them."""
+        self._lookups.invalidate()
         out = []
         for r in self._client.records(schema.SUMMARY.id):
             f = r["fields"]
