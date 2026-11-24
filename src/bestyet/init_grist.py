@@ -51,7 +51,6 @@ from bestyet.init_output import (
     _section,
     _settings_line,
     _show_plan,
-    done_message,  # noqa: F401  (the tests import it from here)
     error_report,
     next_step,
     next_steps_after_create,
@@ -59,20 +58,12 @@ from bestyet.init_output import (
     print_next_steps,
     rerun_hint,
 )
-from bestyet.init_plan import (
-    Plan,
-    build_plan,
-    implement_event_names,  # noqa: F401  (the tests import it from here)
-)
+from bestyet.init_plan import Plan, build_plan
 from bestyet.init_steps import (
     DEFAULT_TABLE,
-    AddColumns,  # noqa: F401  (the tests import it from here)
-    CreateTable,  # noqa: F401  (the tests import it from here)
-    SeedEvents,  # noqa: F401  (the tests import it from here)
     Step,
     _missing_events,
     _require_empty,
-    column_payload,  # noqa: F401  (the tests import it from here)
     contract_table_ids,
     remove_default_table,
     unrelated_tables,
