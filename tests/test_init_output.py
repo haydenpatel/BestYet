@@ -9,8 +9,11 @@ from fake_grist import KEY, FakeGrist
 from init_helpers import (
     CREATE,
     DEFAULTS,
+    DISCUS_SHOT,
     ENV,
     ENV_NO_DOC,
+    N_EVENTS,
+    N_IMPLEMENTS,
     full_fake,
     implement_rows,
     incomplete_fake,
@@ -23,9 +26,6 @@ from bestyet import schema
 from bestyet.init_output import done_message
 from bestyet.init_steps import AddColumns, CreateTable, SeedEvents
 
-DISCUS_SHOT = "Discus and Shot Put"
-N_EVENTS = len(schema.EXAMPLE_EVENTS)
-N_IMPLEMENTS = len(schema.SAMPLE_IMPLEMENTS)
 HINT = "Add implement weights by hand"
 FAIL_TABLES = "POST /api/docs/NEWDOC/tables"
 
@@ -84,6 +84,8 @@ def test_plan_for_a_new_document_is_grouped_in_plain_words(capsys):
     assert "    - Tables: Athletes, Events, Meets, Implements, Results\n" in out
     assert "    - A 'Personal Bests' page showing each athlete's best per event\n" in out
     assert "Add demo data: 3 athletes, 2 meets, 7 results\n" in out
+    # The events the demo needs are added before the demo data that uses them.
+    assert out.index("events required for the demo data") < out.index("Add demo data")
     for hidden in ("Calculated", "Display", "Table1", "Results_summary", "colRef"):
         assert hidden not in out  # behind the scenes: done, not announced
 
@@ -206,6 +208,7 @@ def test_new_document_ends_with_done_and_the_next_steps(capsys):
     assert "and pre-loaded data." in done and "Needs attention" not in done
     assert "\n     GRIST_DOC_ID=NEWDOC\n" in done  # on a line of its own, before the check step
     assert done.index("GRIST_DOC_ID=NEWDOC") < done.index("3. Then run bestyet-init --check")
+    assert "this script does not change your settings:" in done
     for part in ("Setting up", "Plan", "Next steps"):
         assert f"--- {part} ---" in out
 
@@ -237,6 +240,15 @@ def test_events_left_out_say_where_to_add_them(capsys):
     assert run(FakeGrist(), *CREATE, env=ENV_NO_DOC) == 0
     out = capsys.readouterr().out.lower()
     assert "add your events by hand" in out and "cannot record results" in out
+
+
+def test_a_column_that_differs_is_reported_and_left_as_is(capsys):
+    fake = incomplete_fake()
+    fake.tables["Athletes"]["Name"] = {"type": "Numeric"}
+    assert run(fake) == 0
+    out = capsys.readouterr().out
+    assert "Left as is (differs from the contract; this script never changes" in out
+    assert fake.tables["Athletes"]["Name"] == {"type": "Numeric"}
 
 
 def test_default_table_warning_says_how_to_fix_it(capsys):

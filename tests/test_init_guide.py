@@ -11,8 +11,10 @@ import pytest
 from fake_grist import DOC, KEY, FakeGrist
 from init_helpers import (
     CREATE,
+    DISCUS_SHOT,
     ENV,
     ENV_NO_DOC,
+    N_IMPLEMENTS,
     Interrupting,
     before_nth_get,
     full_fake,
@@ -30,10 +32,8 @@ from bestyet import schema
 from bestyet.init_grist import main
 from bestyet.init_plan import implement_event_names
 
-DISCUS_SHOT = "Discus and Shot Put"
 QUALIFIER = f"This also adds the {DISCUS_SHOT} events, which the implements use."
 PROMPT = "Add sample implement weights (by grade and division)?"
-N_IMPLEMENTS = len(schema.SAMPLE_IMPLEMENTS)
 NEW_DOC = "y\nDoc\nn\nn\nn\ny\n"  # the workspace, a name, nothing pre-loaded, apply
 TWO_ORGS = {
     "orgs": [{"id": 1, "name": "Org One"}, {"id": 2, "name": "Org Two"}],
@@ -56,13 +56,19 @@ def test_a_terminal_without_options_starts_the_guide(monkeypatch):
     assert fake.created_docs == [(10, "Doc")]
 
 
-@pytest.mark.parametrize(
-    "argv", [["--check"], ["--dry-run"], ["--yes"], ["--demo-data"], [*CREATE, "--yes"]]
-)
+@pytest.mark.parametrize("argv", [["--check"], ["--dry-run"], ["--yes"], ["--demo-data"]])
 def test_options_that_say_enough_never_start_the_guide(monkeypatch, capsys, argv):
     terminal(monkeypatch)
     main(argv, ENV, full_fake().transport)
     assert "BestYet setup" not in capsys.readouterr().out
+
+
+def test_fully_specified_options_in_a_terminal_ask_nothing(monkeypatch, capsys):
+    fake = FakeGrist()
+    terminal(monkeypatch)
+    assert main([*CREATE, "--yes"], ENV_NO_DOC, fake.transport) == 0
+    assert "BestYet setup" not in capsys.readouterr().out
+    assert fake.created_docs == [(10, "BestYet")]
 
 
 def test_without_a_terminal_it_never_prompts(monkeypatch, capsys):
@@ -190,7 +196,7 @@ def test_the_workspace_and_its_documents_are_looked_up_once():
     listings = []
     intercept(fake, lambda r: listings.append(1) if r.url.path.endswith("/workspaces") else None)
     assert run(fake, *CREATE, env=ENV_NO_DOC) == 0
-    assert len(listings) <= 3  # the choice, the documents, the re-check before creating
+    assert len(listings) == 3  # the choice, the documents, the re-check before creating
 
 
 # Choosing or creating the document.
@@ -275,6 +281,8 @@ def test_an_unreadable_grist_doc_id_does_not_stop_the_questions(
     assert guided(monkeypatch, fake, NEW_DOC, env=ENV) == 0
     out = capsys.readouterr().out
     assert "GRIST_DOC_ID is set but that document cannot be read." in out and reason in out
+    assert "Choose another document below." in out
+    assert "Choose another document below." in out
     assert "Set up that document?" not in out and "Use workspace 'Work'?" in out
     assert fake.created_docs == [(10, "Doc")]
 

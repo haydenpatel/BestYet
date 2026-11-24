@@ -1,7 +1,15 @@
 """The plan: what build_plan decides to do about a document, before anything is written."""
 
 import pytest
-from init_helpers import full_fake, full_tables, implement_rows
+from init_helpers import (
+    N_EVENTS,
+    N_IMPLEMENTS,
+    full_fake,
+    full_tables,
+    implement_rows,
+    rename_column,
+    rename_table,
+)
 
 from bestyet import schema
 from bestyet.init_plan import build_plan, implement_event_names
@@ -18,8 +26,6 @@ from bestyet.init_steps import (
 
 ALL_SEEDS = {"seed_events": True, "seed_implements": True, "demo_data": True}
 SEEDS = (SeedEvents, SeedImplements, LoadDemoData)
-N_EVENTS = len(schema.EXAMPLE_EVENTS)
-N_IMPLEMENTS = len(schema.SAMPLE_IMPLEMENTS)
 
 
 def existing(tables=None, **kwargs):
@@ -68,19 +74,11 @@ def test_a_complete_document_plans_nothing():
     assert plan.steps == [] and plan.conflicts == []
 
 
-def _renamed_table(tables):
-    tables["meets"] = tables.pop("Meets")
-
-
-def _renamed_column(tables):
-    tables["Athletes"]["name"] = tables["Athletes"].pop("Name")
-
-
 @pytest.mark.parametrize(
     ("break_it", "pages", "summary_tables"),
     [
-        (_renamed_table, [schema.SUMMARY.page], [schema.SUMMARY.id]),  # case-only table clash
-        (_renamed_column, [schema.SUMMARY.page], [schema.SUMMARY.id]),  # case-only column clash
+        (rename_table, [schema.SUMMARY.page], [schema.SUMMARY.id]),  # case-only table clash
+        (rename_column, [schema.SUMMARY.page], [schema.SUMMARY.id]),  # case-only column clash
         (lambda t: t.pop(schema.SUMMARY.id), [schema.SUMMARY.page], []),  # page, no summary table
         (lambda t: None, [schema.SUMMARY.page], []),  # a plain table with the summary's name
     ],

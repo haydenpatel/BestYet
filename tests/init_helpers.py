@@ -14,6 +14,9 @@ from bestyet.init_grist import main
 ENV = {"GRIST_URL": BASE, "GRIST_DOC_ID": DOC, "GRIST_API_KEY": KEY}
 ENV_NO_DOC = {k: v for k, v in ENV.items() if k != "GRIST_DOC_ID"}
 CREATE = ("--create", "--workspace", "Work")
+DISCUS_SHOT = "Discus and Shot Put"
+N_EVENTS = len(schema.EXAMPLE_EVENTS)
+N_IMPLEMENTS = len(schema.SAMPLE_IMPLEMENTS)
 DEFAULTS = {c: {"type": "Any"} for c in "ABC"}  # the columns of Grist's default table
 
 
@@ -156,3 +159,13 @@ def implement_rows(fake, samples):
         {"id": i, "fields": {"Event": ids[e], "Grade": g, "Division": d, "Weight": w}}
         for i, (e, g, d, w) in enumerate(samples, 1)
     ]
+
+
+def rename_table(tables):
+    """A case-only clash: the Meets table is called meets."""
+    tables["meets"] = tables.pop("Meets")
+
+
+def rename_column(tables):
+    """A case-only clash: the Athletes column Name is called name."""
+    tables["Athletes"]["name"] = tables["Athletes"].pop("Name")

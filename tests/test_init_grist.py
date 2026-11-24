@@ -14,6 +14,8 @@ from init_helpers import (
     full_fake,
     full_tables,
     intercept,
+    rename_column,
+    rename_table,
     run,
     source_files,
 )
@@ -79,24 +81,19 @@ def test_the_key_never_reaches_the_output(capsys):
 # Documents that cannot be set up.
 
 
-def _renamed_column(tables):
-    tables["Athletes"]["name"] = tables["Athletes"].pop("Name")
-
-
-def _renamed_table(tables):
-    tables["meets"] = tables.pop("Meets")
-
-
 @pytest.mark.parametrize("flags", [(), ("--seed-implements", "--demo-data")])
-@pytest.mark.parametrize("rename", [_renamed_column, _renamed_table])
-def test_case_only_clashes_are_refused_and_nothing_is_written(capsys, rename, flags):
+@pytest.mark.parametrize(
+    ("rename", "spellings"),
+    [(rename_column, ("'name'", "'Name'")), (rename_table, ("'meets'",))],
+)
+def test_case_only_clashes_are_refused_and_nothing_is_written(capsys, rename, spellings, flags):
     tables = full_tables()
     rename(tables)
     fake = full_fake(tables)
     assert run(fake, *flags) == 1
     captured = capsys.readouterr()
     assert "Fix them in Grist" in captured.err
-    assert "'name'" in captured.out or "'meets'" in captured.out
+    assert all(x in captured.out for x in spellings)
     assert "demo data" not in captured.out and "example Events" not in captured.out
     assert fake.writes == []
 

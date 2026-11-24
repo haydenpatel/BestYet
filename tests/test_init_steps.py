@@ -169,6 +169,16 @@ def test_unrelated_tables_are_refused_then_left_alone_when_allowed(capsys):
     assert "Athletes" in fake.tables and fake.tables["Notes"] == {"Text": {"type": "Text"}}
 
 
+def test_client_add_methods_hit_the_expected_endpoints():
+    fake = FakeGrist({"T": {}})
+    key = Config.from_env(ENV).grist_api_key
+    with GristClient(BASE, DOC, key, transport=fake.transport) as c:
+        c.add_tables([{"id": "U", "columns": [{"id": "A", "fields": {"type": "Text"}}]}])
+        c.add_columns("T", [{"id": "B", "fields": {"type": "Int"}}])
+    assert fake.tables["U"] == {"A": {"type": "Text"}}
+    assert fake.tables["T"] == {"B": {"type": "Int"}}
+
+
 def test_renamed_ids_stop_with_an_error():
     fake = FakeGrist({"Athletes": {"Name": {"type": "Text"}}})
     client = GristClient(BASE, DOC, Config.from_env(ENV).grist_api_key, transport=fake.transport)
