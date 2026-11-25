@@ -1,8 +1,8 @@
 """Read-only access to the BestYet tables, with Ref ids resolved to names.
 
 Grist owns the logic: `Value`, `Date`, `IsPB` and `IsNewPB` on Results, `ResultCount` on Meets
-and `Best`, `BestMeet` and `BestDate` on the PB summary table are read as Grist computed them, never recalculated here. A cell Grist could not compute, or an
-empty one, reads as None.
+and `Best`, `BestMeet` and `BestDate` on the PB summary table are read as Grist computed them,
+never recalculated here. A cell Grist could not compute, or an empty one, reads as None.
 """
 
 from dataclasses import dataclass

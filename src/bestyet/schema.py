@@ -80,8 +80,11 @@ DATE_FORMULA = "$Meet.Date"
 RESULT_COUNT_FORMULA = "len(Results.lookupRecords(Meet=$id))"
 
 IS_NEW_PB_FORMULA = """\
-latest = max((m.Date for m in Meets.all if m.Date), default=None)
-return bool($IsPB and $Date and $Date == latest)"""
+latest = max((r.Date for r in Results.all if r.Date), default=None)
+if not ($IsPB and $Date and $Date == latest):
+  return False
+tied = Results.lookupRecords(Athlete=$Athlete, Event=$Event, Implement=$Implement, Value=$Value)
+return all(not r.Date or r.Date >= $Date for r in tied)"""
 
 GRADE_FORMULA = "$Athlete.Grade"
 
@@ -102,8 +105,9 @@ return min(vals) if $Event.Kind == "Time" else max(vals)"""
 BEST_MEET_FORMULA = """\
 if $Best is None:
   return None
-tied = [r for r in $group if r.Value == $Best and r.Date]
-return min(tied, key=lambda r: r.Date).Meet if tied else None"""
+tied = [r for r in $group if r.Value == $Best]
+dated = [r for r in tied if r.Date]
+return min(dated, key=lambda r: r.Date).Meet if dated else tied[0].Meet"""
 
 BEST_DATE_FORMULA = "$BestMeet.Date"
 
@@ -296,7 +300,8 @@ DEMO_MEETS = (  # (name, ISO date, location)
     ("Demo Meet 2", "2026-04-18", "Demo Stadium"),
 )
 # (athlete, event, meet, mark, place). Two results for the same athlete, event and implement
-# show a personal best (Athlete C's two Long Jump marks tie); Discus is a throwing event with an implement.
+# show a personal best (Athlete C's two Long Jump marks tie); Discus is a throwing event with an
+# implement.
 DEMO_RESULTS = (
     ("Athlete A", "100m", "Demo Meet 1", "13.45", 2),
     ("Athlete A", "100m", "Demo Meet 2", "13.20", 1),

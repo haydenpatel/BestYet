@@ -101,11 +101,12 @@ def test_new_pb_is_read_as_grist_computed_it(data):
     assert new == {
         ("Athlete A", "100m", "Demo Meet 2"),
         ("Athlete B", "Discus", "Demo Meet 2"),
-        ("Athlete C", "Long Jump", "Demo Meet 2"),  # a tie for the PB, in the latest meet
         ("Athlete A", "800m", "Demo Meet 2"),  # a first result is a PB
         ("Athlete C", "100m", "Demo Meet 2"),
     }
     assert all(r.is_pb for r in data.results() if r.is_new_pb)
+    # Athlete C's Long Jump only ties the earlier PB, so it is not new.
+    assert not any(r.is_new_pb for r in data.results() if r.event == "Long Jump")
 
 
 def test_personal_bests_come_from_the_summary_table(data):

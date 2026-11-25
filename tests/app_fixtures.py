@@ -61,17 +61,18 @@ def seed_demo(fake):
         best[key] = pick(best.get(key, r["Value"]), r["Value"])
     for r in results:
         r["IsPB"] = r["Value"] == best[(r["Athlete"], r["Event"], r["Implement"])]
-    latest = max(m["Date"] for m in meets.values())
-    for r in results:
-        r["IsNewPB"] = r["IsPB"] and r["Date"] == latest
-    for i, m in enumerate(fake.rows["Meets"], 1):
-        m["fields"]["ResultCount"] = sum(r["Meet"] == i for r in results)
-    fake.rows["Results"] = [{"id": i, "fields": f} for i, f in enumerate(results, 1)]
     first = {}  # the earliest result with the best value, per key
     for r in sorted(results, key=lambda r: r["Date"]):
         key = (r["Athlete"], r["Event"], r["Implement"])
         if r["Value"] == best[key]:
             first.setdefault(key, r)
+    latest = max(r["Date"] for r in results)
+    for r in results:
+        key = (r["Athlete"], r["Event"], r["Implement"])
+        r["IsNewPB"] = first.get(key) is r and r["Date"] == latest
+    for i, m in enumerate(fake.rows["Meets"], 1):
+        m["fields"]["ResultCount"] = sum(r["Meet"] == i for r in results)
+    fake.rows["Results"] = [{"id": i, "fields": f} for i, f in enumerate(results, 1)]
     fake.rows[schema.SUMMARY.id] = [
         {
             "id": i,

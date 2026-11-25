@@ -75,7 +75,7 @@ Computed by Grist, read only (never write these):
 - `Value` (Numeric): `Mark` parsed to a number (seconds for times, metres for distances). Errors if `Mark` cannot be parsed.
 - `Date` (Date): formula `$Meet.Date`.
 - `IsPB` (Bool): true if this row is the athlete's best for that Event and Implement.
-- `IsNewPB` (Bool): `IsPB` is true and the meet is the most recent meet (the latest meet date).
+- `IsNewPB` (Bool): `IsPB` is true, the result is in the most recent meet that has results (the latest result date), and no tied result is earlier (a result that only ties an earlier PB is not new).
 
 ### Trigger formulas that supply defaults
 - `Results.Grade` = `$Athlete.Grade`, recalculated when `Athlete` is set. Changing an athlete's grade later does not alter old results.
@@ -84,7 +84,7 @@ Computed by Grist, read only (never write these):
 - Limitation: `Grade` and `Division` are triggered by `Athlete` only, and `Implement` by `Event` and `Division` only. Send `Athlete` and `Event` in the same create call so all the defaults resolve. Editing the `Athlete` field of an existing result recomputes its `Grade` and `Division` (replacing a division override); editing its `Grade` alone does not recompute `Implement`: edit `Event` or `Division` to refresh it. Editing an athlete's own default `Division` or `Grade` in the Athletes table changes no existing result (its `Division`, `Grade`, `Implement` and any override stay as they were).
 
 ### PB summary table
-`Results_summary_Athlete_Event_Implement` has one row per Athlete, Event and Implement, with `count`, `Best` (Numeric), `BestMeet` (Ref to Meets, shows names) and `BestDate` (Date). `BestMeet` and `BestDate` are the meet and date of the best result; on a tie, the earliest. It is part of the contract, and the app reads personal bests from it: the app never calculates them. If it is missing or renamed, the startup check fails.
+`Results_summary_Athlete_Event_Implement` has one row per Athlete, Event and Implement, with `count`, `Best` (Numeric), `BestMeet` (Ref to Meets, shows names) and `BestDate` (Date). `BestMeet` and `BestDate` are the meet and date of the best result; on a tie, the earliest dated one (`BestDate` is empty when the best result's meet has no date). It is part of the contract, and the app reads personal bests from it: the app never calculates them. If it is missing or renamed, the startup check fails.
 
 Grist keeps a summary table only while a view section uses it. The contract therefore also includes a page named `Personal Bests` (the desktop view of personal bests) that shows the summary table. Do not delete the page.
 
@@ -117,8 +117,11 @@ return $Value == best
 
 `Results.IsNewPB` (regular formula, Bool):
 ```python
-latest = max((m.Date for m in Meets.all if m.Date), default=None)
-return bool($IsPB and $Date and $Date == latest)
+latest = max((r.Date for r in Results.all if r.Date), default=None)
+if not ($IsPB and $Date and $Date == latest):
+  return False
+tied = Results.lookupRecords(Athlete=$Athlete, Event=$Event, Implement=$Implement, Value=$Value)
+return all(not r.Date or r.Date >= $Date for r in tied)
 ```
 
 `Meets.ResultCount` (regular formula, Int): `len(Results.lookupRecords(Meet=$id))`
@@ -148,8 +151,9 @@ return min(vals) if $Event.Kind == "Time" else max(vals)
 ```python
 if $Best is None:
   return None
-tied = [r for r in $group if r.Value == $Best and r.Date]
-return min(tied, key=lambda r: r.Date).Meet if tied else None
+tied = [r for r in $group if r.Value == $Best]
+dated = [r for r in tied if r.Date]
+return min(dated, key=lambda r: r.Date).Meet if dated else tied[0].Meet
 ```
 
 `Results_summary_Athlete_Event_Implement.BestDate` (summary table, Date): `$BestMeet.Date`
@@ -216,7 +220,7 @@ The script is exercised by its own tests: initialise a fresh TEST document, then
 ## Testing
 
 - Unit tests for mark validation and Ref resolution.
-- An integration test script that creates a throwaway meet and a throwaway result, checks that `Value`, `Grade`, `Division`, `Implement` and `IsPB` come back as expected, then deletes exactly what it created. Never leave test rows behind and never touch other rows.
+- An integration test script that creates a throwaway meet and a throwaway result, checks that `Value`, `Grade`, `Division`, `Implement`, `IsPB`, `IsNewPB` and the meet's `ResultCount` come back as expected, then deletes exactly what it created. Never leave test rows behind and never touch other rows.
 - Safety guard (test suite only): any test that writes, deletes or loads demo data must first read the target document's name and refuse to run unless the name contains `TEST`. Integration tests run against the TEST document only, and are skipped by default in CI. This guard lives in the test fixtures and contributor tooling. The app and the init script must not depend on it, so they stay usable on any document, including a production one. Document the guard in CONTRIBUTING, not in the user-facing setup instructions.
 
 ## Packaging
