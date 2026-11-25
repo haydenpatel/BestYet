@@ -5,7 +5,8 @@ so there is one definition of the schema. It has no side effects and makes no
 Grist calls.
 
 The trigger columns, formulas and recalc settings below are the contract, not
-decoration: the app relies on Grist to compute ``Value``, ``Date``, ``IsPB`` and
+decoration: the app relies on Grist to compute ``Value``, ``Date``, ``IsPB``, ``IsNewPB``,
+``Meets.ResultCount``, the summary's ``Best`` / ``BestMeet`` / ``BestDate`` and
 the ``Grade`` / ``Division`` / ``Implement`` defaults. Table and column ids are case sensitive.
 Formula text is stored verbatim from SPEC.md ("Reference formulas"); a test
 keeps the two in sync. Do not name a variable ``rec`` in a formula (Grist
@@ -76,6 +77,12 @@ return $Value == best"""
 
 DATE_FORMULA = "$Meet.Date"
 
+RESULT_COUNT_FORMULA = "len(Results.lookupRecords(Meet=$id))"
+
+IS_NEW_PB_FORMULA = """\
+latest = max((m.Date for m in Meets.all if m.Date), default=None)
+return bool($IsPB and $Date and $Date == latest)"""
+
 GRADE_FORMULA = "$Athlete.Grade"
 
 DIVISION_FORMULA = "$Athlete.Division"
@@ -91,6 +98,14 @@ vals = [r.Value for r in $group if r.Value is not None]
 if not vals:
   return None
 return min(vals) if $Event.Kind == "Time" else max(vals)"""
+
+BEST_MEET_FORMULA = """\
+if $Best is None:
+  return None
+tied = [r for r in $group if r.Value == $Best and r.Date]
+return min(tied, key=lambda r: r.Date).Meet if tied else None"""
+
+BEST_DATE_FORMULA = "$BestMeet.Date"
 
 EVENT_KINDS = ("Time", "Distance")
 # Event categories. The app groups events by them; a blank category shows as "Other".
@@ -129,6 +144,7 @@ TABLES = (
             Column("Name", "Text"),
             Column("Date", "Date"),
             Column("Location", "Text"),
+            Column("ResultCount", "Int", formula=RESULT_COUNT_FORMULA, is_formula=True),
         ),
     ),
     Table(
@@ -172,6 +188,7 @@ TABLES = (
             Column("Value", "Numeric", formula=VALUE_FORMULA, is_formula=True),
             Column("Date", "Date", formula=DATE_FORMULA, is_formula=True),
             Column("IsPB", "Bool", formula=IS_PB_FORMULA, is_formula=True),
+            Column("IsNewPB", "Bool", formula=IS_NEW_PB_FORMULA, is_formula=True),
         ),
     ),
 )
@@ -180,7 +197,18 @@ SUMMARY = Summary(
     id="Results_summary_Athlete_Event_Implement",
     source_table="Results",
     group_by=("Athlete", "Event", "Implement"),
-    columns=(Column("Best", "Numeric", formula=BEST_FORMULA, is_formula=True),),
+    columns=(
+        Column("Best", "Numeric", formula=BEST_FORMULA, is_formula=True),
+        Column(
+            "BestMeet",
+            "Ref:Meets",
+            ref_table="Meets",
+            formula=BEST_MEET_FORMULA,
+            is_formula=True,
+            visible_col="Name",
+        ),
+        Column("BestDate", "Date", formula=BEST_DATE_FORMULA, is_formula=True),
+    ),
     page="Personal Bests",
 )
 # Grist adds ``count`` (Int) to every summary table; the contract requires it.
@@ -199,7 +227,7 @@ WRITABLE_RESULTS_COLUMNS = (
     "Implement",
 )
 # Computed by Grist, read only: never write these.
-COMPUTED_RESULTS_COLUMNS = ("Value", "Date", "IsPB")
+COMPUTED_RESULTS_COLUMNS = ("Value", "Date", "IsPB", "IsNewPB")
 
 # Example Events seed from SPEC.md: (name, kind, category).
 EXAMPLE_EVENTS = (
@@ -268,7 +296,7 @@ DEMO_MEETS = (  # (name, ISO date, location)
     ("Demo Meet 2", "2026-04-18", "Demo Stadium"),
 )
 # (athlete, event, meet, mark, place). Two results for the same athlete, event and implement
-# show a personal best; Discus is a throwing event with an implement.
+# show a personal best (Athlete C's two Long Jump marks tie); Discus is a throwing event with an implement.
 DEMO_RESULTS = (
     ("Athlete A", "100m", "Demo Meet 1", "13.45", 2),
     ("Athlete A", "100m", "Demo Meet 2", "13.20", 1),
@@ -276,6 +304,7 @@ DEMO_RESULTS = (
     ("Athlete B", "Discus", "Demo Meet 1", "21.50", 2),
     ("Athlete B", "Discus", "Demo Meet 2", "23.10", 1),
     ("Athlete C", "Long Jump", "Demo Meet 1", "4.52", 1),
+    ("Athlete C", "Long Jump", "Demo Meet 2", "4.52", 3),
     ("Athlete C", "100m", "Demo Meet 2", "14.02", 4),
 )
 

@@ -108,8 +108,9 @@ def grouped(
         if isinstance(s, AddColumns) and s.table == schema.SUMMARY.id:
             if not page_made:
                 verb = "Added" if past else "Add"
+                noun = "column" if len(s.columns) == 1 else "columns"
                 out["Personal bests"].append(
-                    f"{verb} the missing column to the summary table: {s._names()}"
+                    f"{verb} the missing {noun} to the summary table: {s._names()}"
                 )
         elif isinstance(s, AddColumns) and s.columns[0].formula is None:
             verb = "Added columns to" if past else "Add missing columns to"

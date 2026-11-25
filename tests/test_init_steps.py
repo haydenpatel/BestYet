@@ -79,6 +79,42 @@ def test_summary_table_is_created_through_a_page_and_has_best(fresh):
     assert best["isFormula"] is True and best["formula"] == schema.BEST_FORMULA
 
 
+def test_pb_details_are_grist_formula_columns(fresh):
+    for table, name, formula in [
+        ("Meets", "ResultCount", schema.RESULT_COUNT_FORMULA),
+        ("Results", "IsNewPB", schema.IS_NEW_PB_FORMULA),
+        (schema.SUMMARY.id, "BestMeet", schema.BEST_MEET_FORMULA),
+        (schema.SUMMARY.id, "BestDate", schema.BEST_DATE_FORMULA),
+    ]:
+        col = fresh.tables[table][name]
+        assert col["isFormula"] is True and col["formula"] == formula
+    best_meet = fresh.tables[schema.SUMMARY.id]["BestMeet"]
+    assert best_meet["type"] == "Ref:Meets"
+    assert best_meet["visibleCol"] == fresh.refs[("Meets", "Name")]
+    best_ref = fresh.refs[(schema.SUMMARY.id, "BestMeet")]
+    assert fresh.display[(schema.SUMMARY.id, best_ref)] == "$BestMeet.Name"
+
+
+def test_an_older_document_gets_the_pb_detail_columns_and_a_rerun_changes_nothing():
+    fake = full_fake()
+    for table, column in [
+        ("Meets", "ResultCount"),
+        ("Results", "IsNewPB"),
+        (schema.SUMMARY.id, "BestMeet"),
+        (schema.SUMMARY.id, "BestDate"),
+    ]:
+        del fake.tables[table][column]
+    assert run(fake) == 0
+    assert fake.tables["Meets"]["ResultCount"]["formula"] == schema.RESULT_COUNT_FORMULA
+    assert fake.tables["Results"]["IsNewPB"]["formula"] == schema.IS_NEW_PB_FORMULA
+    summary = fake.tables[schema.SUMMARY.id]
+    assert summary["BestDate"]["formula"] == schema.BEST_DATE_FORMULA
+    assert summary["BestMeet"]["visibleCol"] == fake.refs[("Meets", "Name")]
+    before = len(fake.writes)
+    assert run(fake) == 0
+    assert len(fake.writes) == before
+
+
 def test_ref_columns_show_names(fresh):
     for table, col, target in [
         ("Results", "Athlete", "Athletes"),
@@ -127,10 +163,10 @@ def test_partial_document_gets_only_the_missing_parts():
     tables["Athletes"]["Name"] = {"type": "Numeric"}  # wrong type: left as is
     fake = full_fake(tables)
     assert run(fake) == 0
-    assert set(fake.tables["Meets"]) == {"Name", "Date", "Location"}
+    assert set(fake.tables["Meets"]) == {"Name", "Date", "Location", "ResultCount"}
     assert fake.tables["Results"]["Mark"] == {"type": "Text"}
     assert fake.tables["Athletes"]["Name"] == {"type": "Numeric"}
-    assert len([w for w in fake.writes if w[0] == "POST"]) == 2
+    assert len([w for w in fake.writes if w[0] == "POST"]) == 3
 
 
 def test_visible_col_is_set_only_where_unset():

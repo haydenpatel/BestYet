@@ -38,7 +38,11 @@ def results_col(name: str) -> schema.Column:
         ("Results.Grade", results_col("Grade")),
         ("Results.Division", results_col("Division")),
         ("Results.Implement", results_col("Implement")),
+        ("Results.IsNewPB", results_col("IsNewPB")),
+        ("Meets.ResultCount", schema.table("Meets").columns[3]),
         ("Results_summary_Athlete_Event_Implement.Best", schema.SUMMARY.columns[0]),
+        ("Results_summary_Athlete_Event_Implement.BestMeet", schema.SUMMARY.columns[1]),
+        ("Results_summary_Athlete_Event_Implement.BestDate", schema.SUMMARY.columns[2]),
     ],
 )
 def test_formula_matches_spec(label, column):
@@ -46,8 +50,10 @@ def test_formula_matches_spec(label, column):
 
 
 def test_formula_kinds():
-    for name in ("Value", "Date", "IsPB"):
+    for name in ("Value", "Date", "IsPB", "IsNewPB"):
         assert results_col(name).is_formula
+    assert schema.table("Meets").columns[3].is_formula
+    assert all(c.is_formula for c in schema.SUMMARY.columns)
     for name, deps in (
         ("Grade", ("Athlete",)),
         ("Division", ("Athlete",)),
@@ -106,7 +112,13 @@ def test_summary_spec():
     assert s.group_by == ("Athlete", "Event", "Implement")
     assert set(s.group_by) <= set(schema.required_columns(s.source_table))
     assert schema.SUMMARY_REQUIRED_COLUMNS == ("count", *(c.id for c in s.columns))
-    assert "Best" in schema.SUMMARY_REQUIRED_COLUMNS
+    assert {"Best", "BestMeet", "BestDate"} <= set(schema.SUMMARY_REQUIRED_COLUMNS)
+    best_meet = next(c for c in s.columns if c.id == "BestMeet")
+    assert (best_meet.type, best_meet.ref_table, best_meet.visible_col) == (
+        "Ref:Meets",
+        "Meets",
+        "Name",
+    )
 
 
 def test_events_seed():
@@ -211,6 +223,6 @@ def test_rec_not_used_in_formulas():
 
 def test_helpers():
     assert schema.table("Results").id == "Results"
-    assert schema.required_columns("Meets") == ("Name", "Date", "Location")
+    assert schema.required_columns("Meets") == ("Name", "Date", "Location", "ResultCount")
     with pytest.raises(KeyError):
         schema.table("results")

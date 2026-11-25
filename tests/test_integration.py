@@ -65,6 +65,9 @@ def test_result_computed_columns(test_grist):
         assert fields["Division"] == athlete["fields"]["Division"]
         assert fields["Implement"] == implement["Weight"]
         assert fields["IsPB"] is True
+        assert fields["IsNewPB"] is False  # the throwaway meet is long ago, not the latest
+        (meet,) = [m for m in grist.records("Meets") if m["id"] == meet_ids[0]]
+        assert meet["fields"]["ResultCount"] == 1
         assert fields["Date"] == MEET_DATE
     finally:
         try:
