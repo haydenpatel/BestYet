@@ -1,8 +1,13 @@
-{# Athlete switcher: plain links, so it works without scripting. static/app.js remembers the choice. #}
+{# Athlete switcher: plain links, so it works without scripting. static/app.js remembers the
+   choice and swaps the links for a dropdown when they would need a third row. #}
 {% macro athlete_chips(athletes, selected, endpoint) %}
-<nav class="chips" aria-label="Athletes" data-athlete-chips>
-  {% for athlete in athletes %}
-  <a class="chip" href="{{ url_for(endpoint, athlete=athlete.id) }}" data-athlete-id="{{ athlete.id }}"{% if selected and athlete.id == selected.id %} aria-current="true"{% endif %}>{{ athlete.name }}</a>
-  {% endfor %}
-</nav>
+<div class="switcher">
+  <div class="chips-box">
+    <nav class="chips" aria-label="Athletes" data-athlete-chips>
+      {% for athlete in athletes %}
+      <a class="chip" href="{{ url_for(endpoint, athlete=athlete.id) }}" data-athlete-id="{{ athlete.id }}"{% if selected and athlete.id == selected.id %} aria-current="true"{% endif %}>{{ athlete.name }}</a>
+      {% endfor %}
+    </nav>
+  </div>
+</div>
 {% endmacro %}

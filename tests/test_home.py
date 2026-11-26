@@ -69,6 +69,19 @@ def test_assets_are_local_and_served_by_the_app(web):
                 assert external not in response.text
 
 
+def test_without_scripting_every_athlete_is_a_link(fake, web):
+    fake.rows["Athletes"] = [{"id": i, "fields": {"Name": f"Athlete {i}"}} for i in range(1, 31)]
+    response = web.get("/")
+    assert len(chips(response)) == 30
+    assert "<select" not in response.text  # the dropdown is added by app.js only
+
+
+def test_the_script_runs_after_the_chips_without_deferring(web):
+    html = web.get("/").text
+    assert '<script src="/static/app.js"></script>' in html
+    assert html.index("data-athlete-chips") < html.index("<script")
+
+
 def test_error_pages_share_the_layout_and_lead_home():
     transport = httpx.MockTransport(lambda r: httpx.Response(500, json={"error": "no"}))
     response = create_app(CONFIG, verify=False, transport=transport).test_client().get("/")

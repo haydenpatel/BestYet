@@ -32,7 +32,8 @@
 
 * { box-sizing: border-box; }
 
-html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+/* A steady gutter: collapsing the chips must not change their width by removing a scrollbar. */
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; scrollbar-gutter: stable; }
 
 /* A column filling the screen keeps the tabs at the bottom, within thumb reach. */
 body {
@@ -85,6 +86,40 @@ h2 { margin: 24px 0 8px; font-size: 1.25rem; line-height: 1.25; }
   color: var(--on-accent);
 }
 
+/* The dropdown that app.js puts in place of too many chips. */
+.collapsed .chips-box { height: 0; overflow: hidden; visibility: hidden; }
+
+.pick { position: relative; }
+
+.pick select {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 100%;
+  min-height: var(--tap);
+  padding: 8px 48px 8px 18px;
+  border: 2px solid var(--line);
+  border-radius: calc(var(--tap) / 2);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit; /* at least 16px, so iOS does not zoom on focus */
+  font-weight: 600;
+  text-overflow: ellipsis;
+}
+
+/* The arrow, drawn here because `appearance: none` removes the native one. */
+.pick::after {
+  content: "";
+  position: absolute;
+  top: calc(50% - 7px);
+  right: 22px;
+  width: 9px;
+  height: 9px;
+  border: solid var(--text);
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+  pointer-events: none;
+}
+
 .tabs {
   position: sticky;
   bottom: 0;
@@ -111,5 +146,5 @@ h2 { margin: 24px 0 8px; font-size: 1.25rem; line-height: 1.25; }
 
 a { -webkit-tap-highlight-color: transparent; }
 a:active { opacity: 0.7; }
-a:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+a:focus-visible, select:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
 .tabs a:focus-visible { outline-offset: -4px; }

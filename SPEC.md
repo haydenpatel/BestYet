@@ -171,7 +171,7 @@ return min(dated, key=lambda r: r.Date).Meet if dated else tied[0].Meet
 ## Screens (mobile first, thumb friendly)
 
 1. **Home / PBs**
-   - Athlete switcher (chips) at the top.
+   - Athlete switcher at the top: chips, replaced by a dropdown when they would need a third row (without scripting the chips just wrap).
    - PBs grouped by `Events.Category` (a blank category shows as "Other"), each showing event, best mark, implement if any, and the date and meet of the PB result (`BestDate`, `BestMeet`).
    - A small "new PB" badge for results where `IsNewPB` is true.
 2. **Meets**
