@@ -6,8 +6,11 @@
   <meta name="color-scheme" content="light dark">
   <title>{% block title %}BestYet{% endblock %}</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
+  <script src="{{ url_for('static', filename='loading.js') }}"></script>
 </head>
 <body>
+  <div class="progress" aria-hidden="true"></div>
+  <p class="visually-hidden" role="status" data-loading-status></p>
   <header>
     <h1>{% block heading %}BestYet{% endblock %}</h1>
   </header>

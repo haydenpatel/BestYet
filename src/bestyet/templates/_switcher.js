@@ -30,6 +30,7 @@
         setTimeout(function () {
           main.style.visibility = "";
         }, 3000);
+        stored.dispatchEvent(new Event("loadingstart", { bubbles: true })); // for loading.js
         // replace, so that Back does not return to the page with nobody chosen
         location.replace(stored.href);
       }
@@ -59,6 +60,8 @@
     location.assign(select.value);
   });
   showCurrent();
+  // A page change that did not happen (see loading.js).
+  document.addEventListener("loadingreset", showCurrent);
   pick.append(select);
   switcher.append(pick);
 
