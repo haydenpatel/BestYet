@@ -17,7 +17,5 @@
   <nav class="tabs" aria-label="Main">
     <a href="{{ url_for('home') }}"{% if request.endpoint == 'home' %} aria-current="page"{% endif %}>Personal Bests</a>
   </nav>
-  {# Not deferred: it runs once the styles are in, before the athlete chips are first shown. #}
-  <script src="{{ url_for('static', filename='app.js') }}"></script>
 </body>
 </html>

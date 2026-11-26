@@ -90,7 +90,15 @@ h2 { margin: 24px 0 8px; font-size: 1.25rem; line-height: 1.25; }
   color: var(--on-accent);
 }
 
-/* The dropdown that app.js puts in place of too many chips. */
+/* Hidden until _switcher.js has chosen chips or dropdown, so that a frame painted before it runs
+   shows neither. The animation shows the chips after a second even if the script fails. */
+@media (scripting: enabled) {
+  .switcher:not(.ready) { animation: held 1s step-end; }
+}
+
+@keyframes held { from { visibility: hidden; } }
+
+/* The dropdown that _switcher.js puts in place of too many chips. */
 .collapsed .chips-box { height: 0; overflow: hidden; visibility: hidden; }
 
 .pick { position: relative; }

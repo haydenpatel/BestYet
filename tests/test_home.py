@@ -61,25 +61,35 @@ def test_links_keep_a_path_prefix(web):
 def test_assets_are_local_and_served_by_the_app(web):
     html = web.get("/").text
     assets = re.findall(r'(?:<link [^>]*href|<script [^>]*src)="([^"]*)"', html)
-    assert assets == ["/static/app.css", "/static/app.js"]
-    for path in assets:
-        with web.get(path) as response:
-            assert response.status_code == 200
+    assert assets == ["/static/app.css"]
+    with web.get(assets[0]) as response:
+        assert response.status_code == 200
+        for text in (response.text, html):
             for external in ("http:", "https:", "@import", "url("):
-                assert external not in response.text
+                assert external not in text
 
 
 def test_without_scripting_every_athlete_is_a_link(fake, web):
     fake.rows["Athletes"] = [{"id": i, "fields": {"Name": f"Athlete {i}"}} for i in range(1, 31)]
     response = web.get("/")
     assert len(chips(response)) == 30
-    assert "<select" not in response.text  # the dropdown is added by app.js only
+    assert "<select" not in response.text  # the dropdown is added by the script only
 
 
-def test_the_script_runs_after_the_chips_without_deferring(web):
+def test_the_script_is_inline_right_after_the_chips(web):
+    # An external or later script would let the chips be painted before they become a dropdown.
     html = web.get("/").text
-    assert '<script src="/static/app.js"></script>' in html
-    assert html.index("data-athlete-chips") < html.index("<script")
+    assert re.search(r"</nav>\s*</div>\s*</div>\s*<script>\s*//", html)
+    assert html.count("<script") == 1
+    assert "document.currentScript.previousElementSibling" in html
+
+
+def test_held_chips_always_come_back(web):
+    # Hidden only where scripting is on, and only for as long as the animation runs.
+    with web.get("/static/app.css") as response:
+        css = response.text
+    assert "@media (scripting: enabled) {\n  .switcher:not(.ready) { animation: held 1s" in css
+    assert "@keyframes held { from { visibility: hidden; } }" in css
 
 
 def test_error_pages_share_the_layout_and_lead_home():

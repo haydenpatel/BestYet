@@ -1,7 +1,9 @@
 // Enhancements for the athlete chips. The pages work without this script.
+// It is inlined right after the chips (see _chips.html), so that it runs before they are first
+// painted: nothing visibly swaps, and there is no separate file that could fail to load.
 (function () {
-  var chips = document.querySelector("[data-athlete-chips]");
-  if (!chips) return;
+  var switcher = document.currentScript.previousElementSibling;
+  var chips = switcher.querySelector("[data-athlete-chips]");
   var links = Array.from(chips.querySelectorAll("a"));
   var current = chips.querySelector('[aria-current="true"]');
 
@@ -21,15 +23,22 @@
       var stored = links.find(function (a) {
         return a.dataset.athleteId === id;
       });
-      // replace, so that Back does not return to the page with nobody chosen
-      if (stored) location.replace(stored.href);
+      if (stored) {
+        // Keep "nobody chosen" from showing on the way; show it after all if that stalls.
+        var main = switcher.parentElement;
+        main.style.visibility = "hidden";
+        setTimeout(function () {
+          main.style.visibility = "";
+        }, 3000);
+        // replace, so that Back does not return to the page with nobody chosen
+        location.replace(stored.href);
+      }
     } catch (e) {
       // Storage is blocked.
     }
   }
 
   // Chips that would need a third row are replaced by a dropdown.
-  var switcher = chips.closest(".switcher");
   var pick = document.createElement("div");
   var select = document.createElement("select");
   pick.className = "pick";
@@ -60,6 +69,7 @@
     }));
     switcher.classList.toggle("collapsed", rows.size > 2);
     pick.hidden = rows.size <= 2;
+    switcher.classList.add("ready");
   }
   fit();
   // Fires on resize, rotation and text size changes.
