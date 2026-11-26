@@ -5,9 +5,11 @@
   --surface: #ffffff;
   --text: #201a17;
   --muted: #5e5049;
-  --line: #8c7a71;
+  --line: #8c7a71; /* control borders: at least 3:1 on bg and surface */
+  --outline: #b0a29b; /* soft edge around surfaces: rows, cards and the tab bar */
   --accent: #b23a1e;
   --on-accent: #ffffff;
+  --tab-active: var(--accent); /* label of the current tab */
   /* Gold, for the New PB badge. */
   --badge-bg: #f2b705;
   --badge-text: #241a00;
@@ -18,13 +20,15 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #171210;
-    --surface: #231c19;
-    --text: #f5ece7;
-    --muted: #c9bab2;
-    --line: #8f7b71;
-    --accent: #ff9a7d;
-    --on-accent: #3a0f04;
+    --bg: #121212;
+    --surface: #262626;
+    --text: #f2f2f2;
+    --muted: #b3b3b3;
+    --line: #7a7a7a;
+    --outline: #6b6b6b;
+    --accent: #c94a2c; /* fills, bars and rings only: too dim for text here */
+    --on-accent: #ffffff;
+    --tab-active: var(--text);
     --badge-bg: #f6c744;
     --badge-text: #241a00;
   }
@@ -125,7 +129,7 @@ h2 { margin: 24px 0 8px; font-size: 1.25rem; line-height: 1.25; }
   bottom: 0;
   display: flex;
   padding: 0 env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
-  border-top: 1px solid var(--line);
+  border-top: 1px solid var(--outline);
   background: var(--surface);
 }
 
@@ -142,7 +146,7 @@ h2 { margin: 24px 0 8px; font-size: 1.25rem; line-height: 1.25; }
   text-decoration: none;
 }
 
-.tabs a[aria-current="page"] { border-top-color: var(--accent); color: var(--accent); }
+.tabs a[aria-current="page"] { border-top-color: var(--accent); color: var(--tab-active); }
 
 a { -webkit-tap-highlight-color: transparent; }
 a:active { opacity: 0.7; }
