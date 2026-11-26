@@ -66,7 +66,7 @@ h2 { margin: 24px 0 8px; font-size: 1.25rem; line-height: 1.25; }
   min-width: var(--tap);
   padding: 8px 18px;
   border: 2px solid var(--line);
-  border-radius: 999px;
+  border-radius: calc(var(--tap) / 2);
   background: var(--surface);
   color: var(--text);
   font-weight: 600;
