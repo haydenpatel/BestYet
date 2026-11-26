@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% from "_chips.html" import athlete_chips %}
+{% block title %}Personal Bests - BestYet{% endblock %}
+{% block heading %}Personal Bests{% endblock %}
+{% block body %}
+{% if not athletes %}
+<p class="note">No athletes yet. Add them in Grist.</p>
+{% else %}
+{{ athlete_chips(athletes, selected, "home") }}
+{% if selected %}
+<h2>{{ selected.name }}</h2>
+<p class="note">Personal bests are not shown yet.</p>
+{% else %}
+<p class="note">Choose an athlete.</p>
+{% endif %}
+{% endif %}
+{% endblock %}
