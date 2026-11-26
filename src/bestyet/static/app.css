@@ -1,13 +1,16 @@
 /* Mobile first. System fonts and no external assets. */
 :root {
   color-scheme: light dark;
-  --bg: #f5f6f8;
+  --bg: #faf6f3;
   --surface: #ffffff;
-  --text: #14181f;
-  --muted: #4a5361;
-  --line: #767f90;
-  --accent: #0b57d0;
+  --text: #201a17;
+  --muted: #5e5049;
+  --line: #8c7a71;
+  --accent: #b23a1e;
   --on-accent: #ffffff;
+  /* Gold, for the New PB badge. */
+  --badge-bg: #f2b705;
+  --badge-text: #241a00;
   --tap: 48px;
   --gutter-left: max(16px, env(safe-area-inset-left));
   --gutter-right: max(16px, env(safe-area-inset-right));
@@ -15,13 +18,15 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #11141a;
-    --surface: #1c212b;
-    --text: #eef1f6;
-    --muted: #b6bfce;
-    --line: #77839a;
-    --accent: #9cc0fb;
-    --on-accent: #0b1b36;
+    --bg: #171210;
+    --surface: #231c19;
+    --text: #f5ece7;
+    --muted: #c9bab2;
+    --line: #8f7b71;
+    --accent: #ff9a7d;
+    --on-accent: #3a0f04;
+    --badge-bg: #f6c744;
+    --badge-text: #241a00;
   }
 }
 
