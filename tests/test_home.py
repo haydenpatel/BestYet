@@ -105,6 +105,13 @@ def test_every_page_has_the_loading_feedback(web):
         assert '<div class="progress" aria-hidden="true">' in html
 
 
+def test_the_bar_delay_is_the_same_in_css_and_script(web):
+    with web.get("/static/loading.js") as response:
+        show = re.search(r"SHOW_AFTER = (\d+);", response.text)[1]
+    with web.get("/static/app.css") as response:
+        assert response.text.count(f"linear {show}ms forwards") == 2
+
+
 def test_loading_feedback_gives_up_after_the_grist_timeout(web):
     with web.get("/static/loading.js") as response:
         give_up = int(re.search(r"GIVE_UP_AFTER = (\d+);", response.text)[1])

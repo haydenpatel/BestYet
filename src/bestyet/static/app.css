@@ -167,8 +167,15 @@ h2 { margin: 24px 0 8px; font-size: 1.25rem; line-height: 1.25; }
 .tabs.choosing a:not(.chosen) { border-top-color: transparent; color: var(--muted); }
 .tabs a.chosen { border-top-color: var(--accent); color: var(--tab-active); }
 
-/* A slow one: everything else dims and ignores taps. */
-.loading a:not(.chosen), .loading .pick:not(.chosen) { opacity: 0.4; pointer-events: none; }
+/* A slow one: everything else dims and ignores taps. The delays are CSS animations, set up as the
+   page is left, so that they run even if scripts can no longer change what is painted. */
+.leaving a:not(.chosen), .leaving .pick:not(.chosen) {
+  animation: dim 150ms linear 300ms forwards;
+}
+
+.loading a:not(.chosen), .loading .pick:not(.chosen) { pointer-events: none; }
+
+@keyframes dim { to { opacity: 0.4; } }
 
 .progress {
   display: none;
@@ -181,7 +188,9 @@ h2 { margin: 24px 0 8px; font-size: 1.25rem; line-height: 1.25; }
   overflow: hidden;
 }
 
-.loading .progress { display: block; }
+.leaving .progress { display: block; opacity: 0; animation: appear 1ms linear 300ms forwards; }
+
+@keyframes appear { to { opacity: 1; } }
 
 .progress::before {
   content: "";

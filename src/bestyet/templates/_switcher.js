@@ -57,7 +57,11 @@
     if (!current) select.selectedIndex = 0; // the disabled placeholder
   }
   select.addEventListener("change", function () {
-    location.assign(select.value);
+    // loading.js takes over the navigation if it is there.
+    var options = { bubbles: true, cancelable: true, detail: select.value };
+    if (pick.dispatchEvent(new CustomEvent("pickathlete", options))) {
+      location.assign(select.value);
+    }
   });
   showCurrent();
   // A page change that did not happen (see loading.js).
