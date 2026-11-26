@@ -56,6 +56,7 @@ Table and column ids are case sensitive. At startup, read the schema from `GET /
 - `Name` (Text, unique, for example "Club night 12 Nov 2025")
 - `Date` (Date)
 - `Location` (Text)
+- `ResultCount` (Int, formula, read only): the number of results in the meet.
 
 ### Implements (lookup table)
 - `Event` (Ref to Events), `Grade` (Choice), `Division` (Choice), `Weight` (Text, for example "500g", "1.500kg").
@@ -74,6 +75,7 @@ Computed by Grist, read only (never write these):
 - `Value` (Numeric): `Mark` parsed to a number (seconds for times, metres for distances). Errors if `Mark` cannot be parsed.
 - `Date` (Date): formula `$Meet.Date`.
 - `IsPB` (Bool): true if this row is the athlete's best for that Event and Implement.
+- `IsNewPB` (Bool): `IsPB` is true, the result is in the most recent meet that has results (the latest result date), and no tied result is earlier (a result that only ties an earlier PB is not new).
 
 ### Trigger formulas that supply defaults
 - `Results.Grade` = `$Athlete.Grade`, recalculated when `Athlete` is set. Changing an athlete's grade later does not alter old results.
@@ -82,12 +84,12 @@ Computed by Grist, read only (never write these):
 - Limitation: `Grade` and `Division` are triggered by `Athlete` only, and `Implement` by `Event` and `Division` only. Send `Athlete` and `Event` in the same create call so all the defaults resolve. Editing the `Athlete` field of an existing result recomputes its `Grade` and `Division` (replacing a division override); editing its `Grade` alone does not recompute `Implement`: edit `Event` or `Division` to refresh it. Editing an athlete's own default `Division` or `Grade` in the Athletes table changes no existing result (its `Division`, `Grade`, `Implement` and any override stay as they were).
 
 ### PB summary table
-`Results_summary_Athlete_Event_Implement` has one row per Athlete, Event and Implement, with `count` and `Best` (Numeric). It is part of the contract, and the app reads personal bests from it: the app never calculates them. If it is missing or renamed, the startup check fails.
+`Results_summary_Athlete_Event_Implement` has one row per Athlete, Event and Implement, with `count`, `Best` (Numeric), `BestMeet` (Ref to Meets, shows names) and `BestDate` (Date). `BestMeet` and `BestDate` are the meet and date of the best result; on a tie, the earliest dated one (`BestDate` is empty when the best result's meet has no date). It is part of the contract, and the app reads personal bests from it: the app never calculates them. If it is missing or renamed, the startup check fails.
 
 Grist keeps a summary table only while a view section uses it. The contract therefore also includes a page named `Personal Bests` (the desktop view of personal bests) that shows the summary table. Do not delete the page.
 
 ### Ref columns show names
-`Results.Athlete`, `Results.Event`, `Results.Meet` and `Implements.Event` show the target's `Name`, not the row id (Grist `visibleCol`), and so do the summary table's Athlete and Event columns.
+`Results.Athlete`, `Results.Event`, `Results.Meet` and `Implements.Event` show the target's `Name`, not the row id (Grist `visibleCol`), and so do the summary table's Athlete, Event and `BestMeet` columns.
 
 ### Reference formulas (to recreate the schema in a fresh document)
 
@@ -113,6 +115,17 @@ return $Value == best
 
 `Results.Date` (regular formula): `$Meet.Date`
 
+`Results.IsNewPB` (regular formula, Bool):
+```python
+latest = max((r.Date for r in Results.all if r.Date), default=None)
+if not ($IsPB and $Date and $Date == latest):
+  return False
+tied = Results.lookupRecords(Athlete=$Athlete, Event=$Event, Implement=$Implement, Value=$Value)
+return all(not r.Date or r.Date >= $Date for r in tied)
+```
+
+`Meets.ResultCount` (regular formula, Int): `len(Results.lookupRecords(Meet=$id))`
+
 `Results.Grade` (trigger formula, recalculate when `Athlete` changes): `$Athlete.Grade`
 
 `Results.Division` (trigger formula, recalculate when `Athlete` changes): `$Athlete.Division`
@@ -134,6 +147,17 @@ if not vals:
 return min(vals) if $Event.Kind == "Time" else max(vals)
 ```
 
+`Results_summary_Athlete_Event_Implement.BestMeet` (summary table, Ref to Meets):
+```python
+if $Best is None:
+  return None
+tied = [r for r in $group if r.Value == $Best]
+dated = [r for r in tied if r.Date]
+return min(dated, key=lambda r: r.Date).Meet if dated else tied[0].Meet
+```
+
+`Results_summary_Athlete_Event_Implement.BestDate` (summary table, Date): `$BestMeet.Date`
+
 ## Grist API notes
 
 - Auth header: `Authorization: Bearer <GRIST_API_KEY>`.
@@ -148,10 +172,10 @@ return min(vals) if $Event.Kind == "Time" else max(vals)
 
 1. **Home / PBs**
    - Athlete switcher (chips) at the top.
-   - PBs grouped by `Events.Category` (a blank category shows as "Other"), each showing event, best mark, implement if any, and the date and meet of the PB result.
-   - A small "new PB" badge for results where `IsPB` is true and the meet is the most recent one.
+   - PBs grouped by `Events.Category` (a blank category shows as "Other"), each showing event, best mark, implement if any, and the date and meet of the PB result (`BestDate`, `BestMeet`).
+   - A small "new PB" badge for results where `IsNewPB` is true.
 2. **Meets**
-   - Newest first, showing name, date, location and result count.
+   - Newest first, showing name, date, location and result count (`ResultCount`).
    - "New meet": name, date (native date input), location. Prefill location with the last one used.
 3. **Meet detail**
    - Header with name, date and location, plus edit.
@@ -196,7 +220,7 @@ The script is exercised by its own tests: initialise a fresh TEST document, then
 ## Testing
 
 - Unit tests for mark validation and Ref resolution.
-- An integration test script that creates a throwaway meet and a throwaway result, checks that `Value`, `Grade`, `Division`, `Implement` and `IsPB` come back as expected, then deletes exactly what it created. Never leave test rows behind and never touch other rows.
+- An integration test script that creates a throwaway meet and a throwaway result, checks that `Value`, `Grade`, `Division`, `Implement`, `IsPB`, `IsNewPB` and the meet's `ResultCount` come back as expected, then deletes exactly what it created. Never leave test rows behind and never touch other rows.
 - Safety guard (test suite only): any test that writes, deletes or loads demo data must first read the target document's name and refuse to run unless the name contains `TEST`. Integration tests run against the TEST document only, and are skipped by default in CI. This guard lives in the test fixtures and contributor tooling. The app and the init script must not depend on it, so they stay usable on any document, including a production one. Document the guard in CONTRIBUTING, not in the user-facing setup instructions.
 
 ## Packaging

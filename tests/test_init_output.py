@@ -83,7 +83,7 @@ def test_plan_for_a_new_document_is_grouped_in_plain_words(capsys):
     assert headings == ["New document 'BestYet' in workspace 'Work'", "Pre-loaded data"]
     assert "    - Tables: Athletes, Events, Meets, Implements, Results\n" in out
     assert "    - A 'Personal Bests' page showing each athlete's best per event\n" in out
-    assert "Add demo data: 3 athletes, 2 meets, 7 results\n" in out
+    assert "Add demo data: 3 athletes, 2 meets, 8 results\n" in out
     # The events the demo needs are added before the demo data that uses them.
     assert out.index("events required for the demo data") < out.index("Add demo data")
     for hidden in ("Calculated", "Display", "Table1", "Results_summary", "colRef"):
@@ -400,3 +400,12 @@ def test_creating_while_grist_doc_id_is_set_warns_about_the_old_document(capsys)
     assert run(fake, *CREATE, env=ENV) == 1
     err = capsys.readouterr().err
     assert "currently points at a different document: GRIST_DOC_ID=NEWDOC" in err
+
+
+def test_missing_summary_columns_are_named_in_the_plan(capsys):
+    fake = full_fake()
+    del fake.tables[schema.SUMMARY.id]["BestMeet"]
+    del fake.tables[schema.SUMMARY.id]["BestDate"]
+    assert run(fake, "--dry-run") == 0
+    out = capsys.readouterr().out
+    assert "Add the missing columns to the summary table: BestMeet, BestDate" in out

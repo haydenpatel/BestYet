@@ -38,6 +38,15 @@ def test_meets_have_dates(data):
     ]
 
 
+def test_meets_carry_grists_result_count(fake, data):
+    assert [(m.name, m.result_count) for m in data.meets()] == [
+        ("Demo Meet 1", 3),
+        ("Demo Meet 2", 5),
+    ]
+    fake.rows["Meets"][0]["fields"]["ResultCount"] = ["E", "ValueError"]  # an error cell
+    assert data.meets()[0].result_count == 0
+
+
 def test_events_have_a_category(fake, data):
     fake.rows["Events"][1]["fields"]["Category"] = None  # an empty cell
     events = data.events()
@@ -84,6 +93,20 @@ def test_results_tolerate_empty_and_error_cells(fake, data):
         None,
     )
     assert (last.mark, last.value, last.date, last.is_pb) == (None, None, None, False)
+    assert last.is_new_pb is False
+
+
+def test_new_pb_is_read_as_grist_computed_it(data):
+    new = {(r.athlete, r.event, r.meet) for r in data.results() if r.is_new_pb}
+    assert new == {
+        ("Athlete A", "100m", "Demo Meet 2"),
+        ("Athlete B", "Discus", "Demo Meet 2"),
+        ("Athlete A", "800m", "Demo Meet 2"),  # a first result is a PB
+        ("Athlete C", "100m", "Demo Meet 2"),
+    }
+    assert all(r.is_pb for r in data.results() if r.is_new_pb)
+    # Athlete C's Long Jump only ties the earlier PB, so it is not new.
+    assert not any(r.is_new_pb for r in data.results() if r.event == "Long Jump")
 
 
 def test_personal_bests_come_from_the_summary_table(data):
@@ -92,6 +115,19 @@ def test_personal_bests_come_from_the_summary_table(data):
     sprint = bests[("Athlete A", "100m", None)]
     assert (sprint.count, sprint.best) == (2, 13.20)
     assert bests[("Athlete B", "Discus", "500g")].best == 23.10
+
+
+def test_personal_bests_carry_the_date_and_meet_of_the_best_result(fake, data):
+    bests = {(p.athlete, p.event): p for p in data.personal_bests()}
+    sprint = bests[("Athlete A", "100m")]
+    assert (sprint.best_meet, sprint.best_date) == ("Demo Meet 2", date(2026, 4, 18))
+    assert sprint.best_meet_id == 2
+    tied = bests[("Athlete C", "Long Jump")]  # same mark twice: the earliest result
+    assert (tied.best_meet, tied.best_date) == ("Demo Meet 1", date(2026, 3, 7))
+    summary = fake.rows[schema.SUMMARY.id][0]["fields"]
+    summary.update(BestMeet=0, BestDate=["E", "ValueError"])  # an empty Ref, an error cell
+    first = data.personal_bests()[0]
+    assert (first.best_meet, first.best_meet_id, first.best_date) == (None, None, None)
 
 
 def test_the_layer_never_writes(fake, data):

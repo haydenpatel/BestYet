@@ -1,8 +1,8 @@
 """Read-only access to the BestYet tables, with Ref ids resolved to names.
 
-Grist owns the logic: `Value`, `Date` and `IsPB` on Results and `Best` on the PB summary table
-are read as Grist computed them, never recalculated here. A cell Grist could not compute, or an
-empty one, reads as None.
+Grist owns the logic: `Value`, `Date`, `IsPB` and `IsNewPB` on Results, `ResultCount` on Meets
+and `Best`, `BestMeet` and `BestDate` on the PB summary table are read as Grist computed them,
+never recalculated here. A cell Grist could not compute, or an empty one, reads as None.
 """
 
 from dataclasses import dataclass
@@ -37,6 +37,7 @@ class Meet:
     name: str
     date: date | None
     location: str | None
+    result_count: int
 
 
 @dataclass(frozen=True)
@@ -56,6 +57,7 @@ class Result:
     value: float | None
     date: date | None
     is_pb: bool
+    is_new_pb: bool
 
 
 @dataclass(frozen=True)
@@ -67,6 +69,9 @@ class PersonalBest:
     implement: str | None
     count: int
     best: float | None
+    best_date: date | None
+    best_meet_id: int | None
+    best_meet: str | None
 
 
 def _text(value: object) -> str | None:
@@ -110,7 +115,13 @@ class Data:
 
     def meets(self) -> list[Meet]:
         return [
-            Meet(r["id"], name, dates.from_grist(f.get("Date")), _text(f.get("Location")))
+            Meet(
+                r["id"],
+                name,
+                dates.from_grist(f.get("Date")),
+                _text(f.get("Location")),
+                _int(f.get("ResultCount")) or 0,
+            )
             for r in self._client.records("Meets")
             if (name := _text((f := r["fields"]).get("Name")))
         ]
@@ -138,6 +149,7 @@ class Data:
                     value=_number(f.get("Value")),
                     date=dates.from_grist(f.get("Date")),
                     is_pb=f.get("IsPB") is True,
+                    is_new_pb=f.get("IsNewPB") is True,
                 )
             )
         return out
@@ -149,6 +161,7 @@ class Data:
         for r in self._client.records(schema.SUMMARY.id):
             f = r["fields"]
             athlete, event = _int(f.get("Athlete")), _int(f.get("Event"))
+            meet = _int(f.get("BestMeet"))
             out.append(
                 PersonalBest(
                     athlete_id=athlete,
@@ -158,6 +171,9 @@ class Data:
                     implement=_text(f.get("Implement")),
                     count=_int(f.get("count")) or 0,
                     best=_number(f.get("Best")),
+                    best_date=dates.from_grist(f.get("BestDate")),
+                    best_meet_id=meet,
+                    best_meet=meet and self._lookups.meet_name(meet),
                 )
             )
         return out

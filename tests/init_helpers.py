@@ -54,7 +54,13 @@ def full_tables():
         }
         for t in schema.TABLES
     }
-    tables[schema.SUMMARY.id] = {"count": {"type": "Int"}, "Best": {"type": "Numeric"}}
+    tables[schema.SUMMARY.id] = {"count": {"type": "Int"}}
+    tables[schema.SUMMARY.id].update(
+        {
+            c.id: {"type": c.type, **({"visibleCol": 1} if c.visible_col else {})}
+            for c in schema.SUMMARY.columns
+        }
+    )
     tables[schema.SUMMARY.id].update(
         {g: {"type": "Ref:X", "visibleCol": 1} for g in schema.SUMMARY.group_by[:2]}
     )

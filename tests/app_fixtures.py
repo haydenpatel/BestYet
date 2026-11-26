@@ -1,8 +1,8 @@
 """Fixtures for route tests: the app on a fake Grist seeded with the init script's demo data.
 
 Loaded for every test through `pytest_plugins` in conftest.py. The fake does not run Grist's
-formulas, so the computed cells (Value, Date, Grade, Division, Implement, IsPB and the summary
-table) are filled in here, once, in the shape Grist returns them.
+formulas, so the computed cells (Value, Date, Grade, Division, Implement, IsPB, IsNewPB, the meets'
+ResultCount and the summary table) are filled in here, once, in the shape Grist returns them.
 """
 
 import pytest
@@ -61,6 +61,17 @@ def seed_demo(fake):
         best[key] = pick(best.get(key, r["Value"]), r["Value"])
     for r in results:
         r["IsPB"] = r["Value"] == best[(r["Athlete"], r["Event"], r["Implement"])]
+    first = {}  # the earliest result with the best value, per key
+    for r in sorted(results, key=lambda r: r["Date"]):
+        key = (r["Athlete"], r["Event"], r["Implement"])
+        if r["Value"] == best[key]:
+            first.setdefault(key, r)
+    latest = max(r["Date"] for r in results)
+    for r in results:
+        key = (r["Athlete"], r["Event"], r["Implement"])
+        r["IsNewPB"] = first.get(key) is r and r["Date"] == latest
+    for i, m in enumerate(fake.rows["Meets"], 1):
+        m["fields"]["ResultCount"] = sum(r["Meet"] == i for r in results)
     fake.rows["Results"] = [{"id": i, "fields": f} for i, f in enumerate(results, 1)]
     fake.rows[schema.SUMMARY.id] = [
         {
@@ -71,6 +82,8 @@ def seed_demo(fake):
                 "Implement": imp,
                 "count": sum((r["Athlete"], r["Event"], r["Implement"]) == k for r in results),
                 "Best": v,
+                "BestMeet": first[k]["Meet"],
+                "BestDate": first[k]["Date"],
             },
         }
         for i, (k, v) in enumerate(best.items(), 1)

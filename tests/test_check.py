@@ -98,6 +98,28 @@ def test_missing_page_alone_and_missing_best_column():
     ]
 
 
+@pytest.mark.parametrize(
+    ("table", "column"),
+    [
+        ("Meets", "ResultCount"),
+        ("Results", "IsNewPB"),
+        (schema.SUMMARY.id, "BestDate"),
+        (schema.SUMMARY.id, "BestMeet"),
+    ],
+)
+def test_a_missing_pb_detail_column_fails_the_check(table, column):
+    fake = initialised()
+    assert differences(fake) == []
+    del fake.tables[table][column]
+    assert differences(fake) == [f"{table}: column {column!r} is missing"]
+
+
+def test_best_meet_must_show_meet_names():
+    fake = initialised()
+    del fake.tables[schema.SUMMARY.id]["BestMeet"]["visibleCol"]
+    assert differences(fake) == [f"{schema.SUMMARY.id}.BestMeet should show Meets.Name"]
+
+
 def test_raw_data_view_is_not_a_page():
     fake = initialised()
     fake.views.clear()

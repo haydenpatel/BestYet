@@ -56,6 +56,7 @@ def test_a_new_document_plans_plain_columns_first_then_formulas_then_names_and_p
         "Value",
         "Date",
         "IsPB",
+        "IsNewPB",
     ]
     kinds = [type(s) for s in steps]
     assert kinds.index(CreateTable) < kinds.index(AddColumns) < kinds.index(SetVisibleCols)

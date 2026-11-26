@@ -196,10 +196,11 @@ def _plan_summary(
         plan.steps.append(AddColumns(s.id, missing))
     source = schema.table(s.source_table)
     refs = {c.id: c for c in source.columns}
+    shown = [*(refs[g] for g in s.group_by), *s.columns]
     items = tuple(
-        (g, refs[g].ref_table, refs[g].visible_col)
-        for g in s.group_by
-        if refs[g].visible_col and (have is None or _unset(have.get(g, {})))
+        (c.id, c.ref_table, c.visible_col)
+        for c in shown
+        if c.visible_col and c.ref_table and (have is None or _unset(have.get(c.id, {})))
     )
     if items:
         plan.steps.append(SetVisibleCols(s.id, items))
