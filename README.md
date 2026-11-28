@@ -72,12 +72,22 @@ A `.env` file is not required (real environment variables work and take preceden
 BestYet has no login: anyone who can reach it can read and change the results in the connected document. **Do not expose it to the internet.** Run it on a private network, behind your own access control. See [SECURITY.md](SECURITY.md).
 
 - The Grist API key stays on the server. It is never sent to the browser or written to logs.
-- BestYet stores nothing itself. Planned: remembering your last-used athlete in this browser's `localStorage`.
+- BestYet stores nothing itself. Your browser remembers the last athlete you chose (its row id, in `localStorage`); htmx keeps the current page's address for the tab (`sessionStorage`), and no page content. Everything else works with scripting disabled.
+
+## Testing from a phone
+
+Put the phone on the same network as the computer, then listen on all interfaces:
+
+```bash
+flask --app bestyet run --host 0.0.0.0 --port 8585
+```
+
+Open `http://<computer-ip>:8585` on the phone. There is no login, so only do this on a network you trust, and never add `--debug` here. See [Privacy](#privacy).
 
 ## Tech Stack
 
 - Python and Flask
-- Jinja templates (HTMX planned)
+- Jinja templates, with [htmx](https://htmx.org/) 2.0.11 loading pages (served by the app from `static/`, [licence](src/bestyet/static/htmx.LICENSE))
 - httpx
 - pytest and ruff
 
@@ -97,9 +107,9 @@ Enable the git hooks once per clone with `git config core.hooksPath .githooks`. 
 
 ## Status and Limitations
 
-BestYet 0.0.2 is a non-functional foundations release: the init script and the startup contract check work, but there is no app yet. It works with Grist's REST API, so it is tied to the document layout described in [SPEC.md](SPEC.md).
+BestYet 0.0.2 was a foundations release (the init script and the startup contract check); the app screens are being built. It works with Grist's REST API, so it is tied to the document layout described in [SPEC.md](SPEC.md).
 
-- No app screens yet: `flask --app bestyet run` serves only `/health`, once the startup contract check passes.
+- No results screens yet: after the startup contract check passes, `flask --app bestyet run` serves a Personal Bests page that only switches athletes, and `/health`.
 - No container image or compose file yet.
 - No login: never expose it to the internet (see [Privacy](#privacy)).
 - Grist's hosted service should work but is untested.

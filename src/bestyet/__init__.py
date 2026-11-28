@@ -2,12 +2,12 @@
 
 import click
 import httpx
-from flask import Flask, render_template
+from flask import Flask, render_template, request
 
 from bestyet import errors
 from bestyet.check import ContractError, require_contract
 from bestyet.config import Config, ConfigError
-from bestyet.data import Data
+from bestyet.data import Data, current_data
 from bestyet.grist import GristClient, GristError
 
 
@@ -50,6 +50,13 @@ def create_app(
     app.config["BESTYET"] = config
     app.extensions["bestyet_data"] = Data(client)
     errors.register(app, config)
+
+    @app.get("/")
+    def home():
+        athletes = current_data().athletes()
+        wanted = request.args.get("athlete", type=int)
+        selected = next((a for a in athletes if a.id == wanted), None)
+        return render_template("home.html", athletes=athletes, selected=selected)
 
     @app.get("/health")
     def health():

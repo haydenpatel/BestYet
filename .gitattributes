@@ -1,3 +1,5 @@
 * text=auto
 .githooks/* text eol=lf
 *.sh text eol=lf
+# Vendored as released: its checksum is tested.
+src/bestyet/static/htmx.min.js -text

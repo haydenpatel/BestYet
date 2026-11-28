@@ -1,0 +1,239 @@
+/* Mobile first. System fonts and no external assets. */
+:root {
+  color-scheme: light dark;
+  --bg: #faf6f3;
+  --surface: #ffffff;
+  --text: #201a17;
+  --muted: #5e5049;
+  --line: #8c7a71; /* control borders: at least 3:1 on bg and surface */
+  --outline: #b0a29b; /* soft edge around surfaces: rows, cards and the tab bar */
+  --accent: #b23a1e;
+  --on-accent: #ffffff;
+  --tab-active: var(--accent); /* label of the current tab */
+  /* Gold, for the New PB badge. */
+  --badge-bg: #f2b705;
+  --badge-text: #241a00;
+  --tap: 48px;
+  --gutter-left: max(16px, env(safe-area-inset-left));
+  --gutter-right: max(16px, env(safe-area-inset-right));
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #121212;
+    --surface: #262626;
+    --text: #f2f2f2;
+    --muted: #b3b3b3;
+    --line: #7a7a7a;
+    --outline: #6b6b6b;
+    --accent: #c94a2c; /* fills, bars and rings only: too dim for text here */
+    --on-accent: #ffffff;
+    --tab-active: var(--text);
+    --badge-bg: #f6c744;
+    --badge-text: #241a00;
+  }
+}
+
+* { box-sizing: border-box; }
+
+/* A steady gutter: collapsing the chips must not change their width by removing a scrollbar. */
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; scrollbar-gutter: stable; }
+
+/* A column filling the screen keeps the tabs at the bottom, within thumb reach. */
+body {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  min-height: 100dvh;
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 1.0625rem/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  overflow-wrap: anywhere;
+}
+
+header, main {
+  width: 100%;
+  max-width: 40rem;
+  margin: 0 auto;
+  padding-left: var(--gutter-left);
+  padding-right: var(--gutter-right);
+}
+
+header { padding-top: max(16px, env(safe-area-inset-top)); }
+main { flex: 1; padding-bottom: 24px; }
+h1 { margin: 0 0 12px; font-size: 1.5rem; line-height: 1.2; }
+h2 { margin: 24px 0 8px; font-size: 1.25rem; line-height: 1.25; }
+.note { color: var(--muted); }
+
+.chips { display: flex; flex-wrap: wrap; gap: 8px; }
+
+.chip, .button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--tap);
+  min-width: var(--tap);
+  padding: 8px 18px;
+  border: 2px solid var(--line);
+  border-radius: calc(var(--tap) / 2);
+  background: var(--surface);
+  color: var(--text);
+  font-weight: 600;
+  text-align: center;
+  text-decoration: none;
+}
+
+.chip[aria-current="true"], .button {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+/* Hidden until _switcher.js has chosen chips or dropdown, so that a frame painted before it runs
+   shows neither. The animation shows the chips after a second even if the script fails. */
+@media (scripting: enabled) {
+  .switcher:not(.ready) { animation: held 1s step-end; }
+}
+
+@keyframes held { from { visibility: hidden; } }
+
+/* The dropdown that _switcher.js puts in place of too many chips. */
+.collapsed .chips-box { height: 0; overflow: hidden; visibility: hidden; }
+
+.pick { position: relative; }
+
+.pick select {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 100%;
+  min-height: var(--tap);
+  padding: 8px 48px 8px 18px;
+  border: 2px solid var(--line);
+  border-radius: calc(var(--tap) / 2);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit; /* at least 16px, so iOS does not zoom on focus */
+  font-weight: 600;
+  text-overflow: ellipsis;
+}
+
+/* The arrow, drawn here because `appearance: none` removes the native one. */
+.pick::after {
+  content: "";
+  position: absolute;
+  top: calc(50% - 7px);
+  right: 22px;
+  width: 9px;
+  height: 9px;
+  border: solid var(--text);
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+  pointer-events: none;
+}
+
+.tabs {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  padding: 0 env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  border-top: 1px solid var(--outline);
+  background: var(--surface);
+}
+
+.tabs a {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 56px;
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  color: var(--muted);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.tabs a[aria-current="page"] { border-top-color: var(--accent); color: var(--tab-active); }
+
+/* Page changes (app.js). The tapped chip or tab takes over the "current" look at once. */
+.chips.choosing .chip[aria-current="true"]:not(.chosen) {
+  border-color: var(--line);
+  background: var(--surface);
+  color: var(--text);
+}
+
+.chips .chip.chosen { border-color: var(--accent); background: var(--accent); color: var(--on-accent); }
+.tabs.choosing a:not(.chosen) { border-top-color: transparent; color: var(--muted); }
+.tabs a.chosen { border-top-color: var(--accent); color: var(--tab-active); }
+
+/* A slow one: everything else dims and ignores taps. */
+.loading a:not(.chosen), .loading .pick:not(.chosen) { opacity: 0.4; pointer-events: none; }
+
+.progress {
+  display: none;
+  position: fixed;
+  top: env(safe-area-inset-top);
+  right: 0;
+  left: 0;
+  z-index: 1;
+  height: 4px;
+  overflow: hidden;
+}
+
+.loading .progress { display: block; }
+
+.progress::before {
+  content: "";
+  display: block;
+  width: 40%;
+  height: 100%;
+  background: var(--accent);
+  animation: slide 1.2s ease-in-out infinite;
+}
+
+@keyframes slide {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(250%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .progress::before { width: 100%; animation: none; }
+}
+
+/* A load that failed, until the next one is asked for. Above the tabs, clear of the chips. */
+.failed {
+  position: fixed;
+  bottom: calc(72px + env(safe-area-inset-bottom)); /* the tab bar and a gap */
+  right: var(--gutter-right);
+  left: var(--gutter-left);
+  z-index: 2;
+  max-width: 38rem;
+  margin: 0 auto;
+  padding: 12px 16px;
+  border: 2px solid var(--accent);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--text);
+}
+
+.failed p { margin: 0 0 8px; }
+.failed .reloading { opacity: 0.4; } /* tapped: dimmed, but still takes taps */
+
+/* The page htmx swaps: no box of its own, so the column above still lays out its parts. */
+#page { display: contents; }
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+a { -webkit-tap-highlight-color: transparent; }
+a:active { opacity: 0.7; }
+a:focus-visible, select:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+.tabs a:focus-visible { outline-offset: -4px; }

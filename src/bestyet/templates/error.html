@@ -1,3 +1,6 @@
 {% extends "base.html" %}
 {% block title %}Error - BestYet{% endblock %}
-{% block body %}<h1>BestYet</h1><p>{{ message }}</p>{% endblock %}
+{% block body %}
+<p>{{ message }}</p>
+<p><a class="button" href="{{ url_for('home') }}">Go to Personal Bests</a></p>
+{% endblock %}
