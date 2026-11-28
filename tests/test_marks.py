@@ -3,7 +3,7 @@
 import pytest
 
 from bestyet import marks
-from bestyet.marks import parse_mark
+from bestyet.marks import format_value, parse_mark
 
 
 def grist_value(mark: str) -> float | None:
@@ -149,3 +149,22 @@ def test_messages_are_short_single_line_sentences():
 def test_result_is_frozen():
     with pytest.raises(AttributeError):
         parse_mark("2.98").ok = False
+
+
+@pytest.mark.parametrize(
+    "value, kind, text",
+    [
+        (13.2, "Time", "13.20 s"),
+        (14.105, "Time", "14.105 s"),
+        (59.999999, "Time", "59.999999 s"),
+        (60.0, "Time", "1:00.00"),
+        (135.3, "Time", "2:15.30"),
+        (119.9999999, "Time", "2:00.00"),  # rounded before it is split
+        (3905.5, "Time", "65:05.50"),
+        (4.52, "Distance", "4.52 m"),
+        (62.0, "Distance", "62.00 m"),
+        (7.8, None, "7.80"),
+    ],
+)
+def test_format_value(value, kind, text):
+    assert format_value(value, kind) == text

@@ -10,7 +10,26 @@
 {{ athlete_chips(athletes, selected, "home") }}
 {% if selected %}
 <h2>{{ selected.name }}</h2>
-<p class="note">Personal bests are not shown yet.</p>
+{% for category, rows in groups.items() %}
+<h3 class="category">{{ category }}</h3>
+<ul class="card">
+  {% for row in rows %}
+  <li>
+    <div class="pb-line">
+      <span class="pb-event">{{ row.pb.event }}{% if row.pb.implement %} · {{ row.pb.implement }}{% endif %}</span>
+      <span class="pb-result">
+        {% if row.is_new %}<span class="badge">New PB</span>{% endif %}
+        <span class="pb-mark">{{ row.pb.best|mark(row.kind) }}</span>
+      </span>
+    </div>
+    {% set when = [row.pb.best_date and row.pb.best_date|day(today), row.pb.best_meet]|select|join(" · ") %}
+    {% if when %}<div class="pb-when">{{ when }}</div>{% endif %}
+  </li>
+  {% endfor %}
+</ul>
+{% else %}
+<p class="note">No personal bests yet.</p>
+{% endfor %}
 {% else %}
 <p class="note">Choose an athlete.</p>
 {% endif %}

@@ -66,6 +66,42 @@ h1 { margin: 0 0 12px; font-size: 1.5rem; line-height: 1.2; }
 h2 { margin: 24px 0 8px; font-size: 1.25rem; line-height: 1.25; }
 .note { color: var(--muted); }
 
+/* Personal bests: a card per category, two lines per best. The mark never wraps, so a long
+   event name wraps beside it. */
+.category {
+  margin: 16px 0 8px;
+  color: var(--muted);
+  font-size: 0.875rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.card {
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--outline);
+  border-radius: 12px;
+  background: var(--surface);
+  list-style: none;
+}
+
+.card li { padding: 10px 12px; }
+.card li + li { border-top: 1px solid var(--outline); }
+.pb-line { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.pb-event { min-width: 0; font-weight: 600; }
+.pb-result { display: flex; flex: none; align-items: baseline; gap: 8px; white-space: nowrap; }
+.pb-mark { font-weight: 700; font-variant-numeric: tabular-nums; }
+.pb-when { color: var(--muted); font-size: 0.9375rem; }
+
+.badge {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--badge-bg);
+  color: var(--badge-text);
+  font-size: 0.8125rem;
+  font-weight: 700;
+}
+
 .chips { display: flex; flex-wrap: wrap; gap: 8px; }
 
 .chip, .button {

@@ -5,6 +5,7 @@ and `Best`, `BestMeet` and `BestDate` on the PB summary table are read as Grist 
 never recalculated here. A cell Grist could not compute, or an empty one, reads as None.
 """
 
+import json
 from dataclasses import dataclass
 from datetime import date
 
@@ -112,6 +113,17 @@ class Data:
             for r in self._client.records("Events")
             if (name := _text((f := r["fields"]).get("Name")))
         ]
+
+    def categories(self) -> list[str]:
+        """The `Events.Category` choices, in the order Grist holds them."""
+        for column in self._client.columns("Events"):
+            if column["id"] == "Category":
+                try:
+                    options = json.loads(column["fields"].get("widgetOptions") or "{}")
+                    return [name for c in options.get("choices") or [] if (name := _text(c))]
+                except (ValueError, TypeError, AttributeError):
+                    break  # not the JSON Grist writes: no known order
+        return []
 
     def meets(self) -> list[Meet]:
         return [

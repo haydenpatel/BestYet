@@ -4,8 +4,8 @@ import click
 import httpx
 from flask import Flask, render_template, request
 
-from bestyet import errors
-from bestyet.check import ContractError, require_contract
+from bestyet import dates, errors, marks, pbs
+from bestyet.check import FIX_HINT, ContractError, require_contract
 from bestyet.config import Config, ConfigError
 from bestyet.data import Data, current_data
 from bestyet.grist import GristClient, GristError
@@ -41,7 +41,7 @@ def create_app(
             require_contract(client)
     except ContractError as e:
         client.close()
-        raise StartupError(str(e)) from None
+        raise StartupError(f"{e}\n{FIX_HINT}") from None
     except GristError as e:
         client.close()
         raise StartupError(f"Could not check the Grist document: {e}") from None
@@ -50,13 +50,29 @@ def create_app(
     app.config["BESTYET"] = config
     app.extensions["bestyet_data"] = Data(client)
     errors.register(app, config)
+    app.add_template_filter(marks.format_value, "mark")
+    app.add_template_filter(dates.display, "day")
 
     @app.get("/")
     def home():
-        athletes = current_data().athletes()
+        data = current_data()
+        athletes = data.athletes()
         wanted = request.args.get("athlete", type=int)
         selected = next((a for a in athletes if a.id == wanted), None)
-        return render_template("home.html", athletes=athletes, selected=selected)
+        groups = selected and pbs.by_category(
+            selected.id,
+            data.personal_bests(),
+            data.events(),
+            data.results(),
+            data.categories(),
+        )
+        return render_template(
+            "home.html",
+            athletes=athletes,
+            selected=selected,
+            groups=groups,
+            today=dates.today(config.tz),
+        )
 
     @app.get("/health")
     def health():

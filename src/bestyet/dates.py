@@ -36,6 +36,12 @@ def today(tz_name: str) -> date:
     return datetime.now(ZoneInfo(tz_name)).date()
 
 
+def display(d: date, today: date) -> str:
+    """A date as the screens show it: `18 Apr`, with the year only if it is not this year."""
+    text = f"{d.day} {d:%b}"
+    return text if d.year == today.year else f"{text} {d.year}"
+
+
 def parse_iso(text: str) -> date | None:
     """Parse the `YYYY-MM-DD` text of a native date input, or None if it is not a real date."""
     text = text.strip()

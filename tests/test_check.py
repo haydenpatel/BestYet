@@ -3,7 +3,14 @@ from fake_grist import BASE, DOC, KEY, FakeGrist
 from init_helpers import ENV, run, source_files
 
 from bestyet import StartupError, create_app, schema
-from bestyet.check import ContractError, check_document, has_page, page_names, require_contract
+from bestyet.check import (
+    FIX_HINT,
+    ContractError,
+    check_document,
+    has_page,
+    page_names,
+    require_contract,
+)
 from bestyet.config import Config
 from bestyet.grist import GristClient
 from bestyet.init_grist import main
@@ -284,6 +291,17 @@ def test_app_refuses_to_start_on_a_mismatch():
         create_app(CONFIG, transport=fake.transport)
     assert "Results: column 'Mark' is missing" in e.value.format_message()
     assert KEY not in e.value.format_message()
+
+
+def test_app_refuses_to_start_without_the_summary_table_and_points_to_the_init_script():
+    fake = initialised()
+    del fake.tables[schema.SUMMARY.id]
+    with pytest.raises(StartupError) as e:
+        create_app(CONFIG, transport=fake.transport)
+    message = e.value.format_message()
+    assert f"table {schema.SUMMARY.id!r} is missing" in message
+    assert message.endswith(FIX_HINT)
+    assert "Running bestyet-init without --check adds what is missing" in message
 
 
 def test_app_startup_reports_grist_failure_without_the_key():
