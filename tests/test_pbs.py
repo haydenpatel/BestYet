@@ -141,7 +141,7 @@ def test_rows_with_no_event_or_no_best_are_left_out():
 
 def test_the_page_shows_a_card_per_category(web):
     html = " ".join(web.get("/?athlete=1").text.split())
-    assert "<h2>Athlete A</h2>" in html
+    assert '<h2 class="visually-hidden">Athlete A</h2>' in html
     assert html.index('<h3 class="category">Sprints</h3>') < html.index(">Middle distance</h3>")
     assert html.count('<ul class="card">') == 2
     assert '<span class="pb-event">100m</span>' in html

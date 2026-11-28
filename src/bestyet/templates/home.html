@@ -9,7 +9,8 @@
 {% else %}
 {{ athlete_chips(athletes, selected, "home") }}
 {% if selected %}
-<h2>{{ selected.name }}</h2>
+{# The switcher shows who is selected, so this heading is for screen readers only. #}
+<h2 class="visually-hidden">{{ selected.name }}</h2>
 {% for category, rows in groups.items() %}
 <h3 class="category">{{ category }}</h3>
 <ul class="card">
