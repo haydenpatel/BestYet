@@ -31,7 +31,7 @@ def test_home_lists_the_athletes_as_links(web):
 def test_the_chosen_athlete_is_marked(web):
     response = web.get("/?athlete=2")
     assert [current for _, _, current in chips(response)] == [False, True, False]
-    assert "<h2>Athlete B</h2>" in response.text
+    assert '<h2 class="visually-hidden">Athlete B</h2>' in response.text
     assert "Choose an athlete." not in response.text
 
 

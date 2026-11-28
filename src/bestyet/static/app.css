@@ -63,7 +63,6 @@ header, main {
 header { padding-top: max(16px, env(safe-area-inset-top)); }
 main { flex: 1; padding-bottom: 24px; }
 h1 { margin: 0 0 12px; font-size: 1.5rem; line-height: 1.2; }
-h2 { margin: 24px 0 8px; font-size: 1.25rem; line-height: 1.25; }
 .note { color: var(--muted); }
 
 /* Personal bests: a card per category, two lines per best. A long event name wraps beside the
