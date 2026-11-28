@@ -7,13 +7,13 @@
   <title>{% block title %}BestYet{% endblock %}</title>
   {# htmx: no eval, this server only, and nothing of a page is kept, so Back and Forward load it
      again from the server rather than show old results. Error pages are swapped in like any other.
-     The timeout is longer than Grist's 15 s, so that its error page normally arrives first. #}
+     A load is given up after 10 s, though a Grist call may wait 15 s: pages only read. #}
   <meta name="htmx-config" content='{
     "allowEval": false,
     "selfRequestsOnly": true,
     "historyCacheSize": 0,
     "refreshOnHistoryMiss": true,
-    "timeout": 20000,
+    "timeout": 10000,
     "defaultSettleDelay": 0,
     "includeIndicatorStyles": false,
     "scrollIntoViewOnBoost": false,

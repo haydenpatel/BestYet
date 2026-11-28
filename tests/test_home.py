@@ -7,7 +7,6 @@ import httpx
 from app_fixtures import CONFIG
 
 from bestyet import create_app
-from bestyet.grist import DEFAULT_TIMEOUT
 
 
 def chips(response):
@@ -106,9 +105,9 @@ def test_htmx_is_set_up_safely_and_keeps_no_pages(web):
     assert (config["historyCacheSize"], config["refreshOnHistoryMiss"]) == (0, True)
 
 
-def test_htmx_waits_longer_than_grist_and_shows_error_pages(web):
+def test_htmx_gives_up_after_ten_seconds_and_shows_error_pages(web):
     config = htmx_config(web)
-    assert config["timeout"] > DEFAULT_TIMEOUT * 1000
+    assert config["timeout"] == 10_000
     assert {"code": "[45]..", "swap": True, "error": True} in config["responseHandling"]
 
 
