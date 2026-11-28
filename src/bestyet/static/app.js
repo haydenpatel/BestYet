@@ -6,6 +6,7 @@
   var root = document.documentElement;
   var request; // the XMLHttpRequest being waited for
   var chosen, timer;
+  var leaving; // set while a tapped Reload waits to be painted
 
   function announce(text) {
     document.querySelector("[data-loading-status]").textContent = text;
@@ -24,6 +25,7 @@
     var link = notice.querySelector("a");
     if (path) link.href = path;
     showReloading(link, false);
+    leaving = null; // a reload still waiting is dropped
     notice.hidden = !text;
   }
 
@@ -78,11 +80,26 @@
     true
   );
 
-  // Set at once on the tap, to be painted before a full page load stops iPhone Safari painting.
-  // The link keeps working, in case that load fails or hangs.
+  // iPhone Safari stops painting once a full page load starts, so a tapped Reload is shown first
+  // and the page loaded after a frame. The link keeps working, in case that load fails or hangs.
   document.querySelector("[data-load-failed] a").addEventListener("click", function (event) {
-    if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return; // loads elsewhere
-    showReloading(event.currentTarget, true);
+    if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return; // for the browser
+    event.preventDefault();
+    if (leaving) return;
+    var link = event.currentTarget;
+    var mine = (leaving = {});
+    function go() {
+      if (leaving !== mine) return;
+      leaving = null;
+      location.assign(link.href);
+    }
+    showReloading(link, true);
+    requestAnimationFrame(function () {
+      requestAnimationFrame(function () {
+        setTimeout(go, 50);
+      });
+    });
+    setTimeout(go, 250); // in case no frames are being drawn
   });
 
   // On an athlete's page the home tab means that page: going by way of "/" and its redirect to the

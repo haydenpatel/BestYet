@@ -145,6 +145,10 @@ def test_a_tapped_reload_is_dimmed_but_not_disabled(web):
     # restored whenever the message is cleared or shown, which includes a restored page
     assert "showReloading(link, false);" in script
     assert 'done();\n    warn("");\n    resetDropdown();' in script
+    # the page is left only after a frame, or after a moment if none is drawn
+    assert "event.preventDefault();\n    if (leaving) return;" in script
+    assert "requestAnimationFrame(function () {\n        setTimeout(go, 50);" in script
+    assert "setTimeout(go, 250);" in script
 
 
 def test_every_page_can_be_swapped_in_and_has_the_feedback(web):
