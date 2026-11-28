@@ -5,6 +5,7 @@ and `Best`, `BestMeet` and `BestDate` on the PB summary table are read as Grist 
 never recalculated here. A cell Grist could not compute, or an empty one, reads as None.
 """
 
+import json
 from dataclasses import dataclass
 from datetime import date
 
@@ -58,6 +59,7 @@ class Result:
     date: date | None
     is_pb: bool
     is_new_pb: bool
+    implement_key: str  # the cell exactly as Grist holds it, to match summary rows
 
 
 @dataclass(frozen=True)
@@ -72,6 +74,7 @@ class PersonalBest:
     best_date: date | None
     best_meet_id: int | None
     best_meet: str | None
+    implement_key: str  # the cell exactly as Grist holds it: it groups on the untrimmed text
 
 
 def _text(value: object) -> str | None:
@@ -113,6 +116,17 @@ class Data:
             if (name := _text((f := r["fields"]).get("Name")))
         ]
 
+    def categories(self) -> list[str]:
+        """The `Events.Category` choices, in the order Grist holds them."""
+        for column in self._client.columns("Events"):
+            if column["id"] == "Category":
+                try:
+                    options = json.loads(column["fields"].get("widgetOptions") or "{}")
+                    return [name for c in options.get("choices") or [] if (name := _text(c))]
+                except (ValueError, TypeError, AttributeError):
+                    break  # not the JSON Grist writes: no known order
+        return []
+
     def meets(self) -> list[Meet]:
         return [
             Meet(
@@ -150,6 +164,7 @@ class Data:
                     date=dates.from_grist(f.get("Date")),
                     is_pb=f.get("IsPB") is True,
                     is_new_pb=f.get("IsNewPB") is True,
+                    implement_key=repr(f.get("Implement")),
                 )
             )
         return out
@@ -174,6 +189,7 @@ class Data:
                     best_date=dates.from_grist(f.get("BestDate")),
                     best_meet_id=meet,
                     best_meet=meet and self._lookups.meet_name(meet),
+                    implement_key=repr(f.get("Implement")),
                 )
             )
         return out

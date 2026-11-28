@@ -109,7 +109,7 @@ Enable the git hooks once per clone with `git config core.hooksPath .githooks`. 
 
 BestYet 0.0.2 was a foundations release (the init script and the startup contract check); the app screens are being built. It works with Grist's REST API, so it is tied to the document layout described in [SPEC.md](SPEC.md).
 
-- No results screens yet: after the startup contract check passes, `flask --app bestyet run` serves a Personal Bests page that only switches athletes, and `/health`.
+- Personal bests are the only results screen so far: after the startup contract check passes, `flask --app bestyet run` serves it, and `/health`. Meets and results are entered in Grist.
 - No container image or compose file yet.
 - No login: never expose it to the internet (see [Privacy](#privacy)).
 - Grist's hosted service should work but is untested.

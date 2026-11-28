@@ -49,6 +49,27 @@ def _fail(message: str) -> MarkResult:
     return MarkResult(ok=False, error=message)
 
 
+def format_value(value: float, kind: str | None) -> str:
+    """A computed mark (seconds or metres) as the screens show it.
+
+    At least two decimals, with any further ones (up to six) kept. A time is `13.20 s`, or
+    `2:15.30` from 60 seconds. A distance is `4.52 m`. An unknown kind has no unit. A negative
+    value (only from a mark typed in Grist) is the same with a minus sign.
+    """
+    millionths = round(value * 1_000_000)
+    sign = "-" if millionths < 0 else ""
+    millionths = abs(millionths)
+    minutes = 0
+    if kind == "Time":
+        minutes, millionths = divmod(millionths, 60_000_000)
+    whole, frac = divmod(millionths, 1_000_000)
+    decimals = f"{frac:06d}".rstrip("0").ljust(2, "0")
+    if minutes:
+        return f"{sign}{minutes}:{whole:02d}.{decimals}"
+    unit = {"Time": " s", "Distance": " m"}.get(kind, "")
+    return f"{sign}{whole}.{decimals}{unit}"
+
+
 def parse_mark(text: str) -> MarkResult:
     """Check ``text`` and return its value and normalised form, or an error."""
     s = text.strip()

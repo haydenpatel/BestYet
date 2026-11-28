@@ -92,3 +92,10 @@ def test_parse_and_format_iso():
 )
 def test_parse_iso_invalid(text):
     assert dates.parse_iso(text) is None
+
+
+def test_display_adds_the_year_only_when_it_is_not_this_year():
+    today = date(2026, 11, 28)
+    assert dates.display(date(2026, 4, 18), today) == "18 Apr"
+    assert dates.display(date(2025, 11, 8), today) == "8 Nov 2025"
+    assert dates.display(date(2027, 1, 1), today) == "1 Jan 2027"

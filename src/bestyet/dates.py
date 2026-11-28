@@ -2,7 +2,7 @@
 
 A Grist Date is Unix seconds at UTC midnight. No time zone is applied in either
 direction, so the date entered is the date stored and shown. The configured time
-zone is only used by `today`, to pick the default date for a new meet.
+zone is only used by `today`, to work out today's date.
 """
 
 import math
@@ -34,6 +34,12 @@ def from_grist(value: object) -> date | None:
 def today(tz_name: str) -> date:
     """Today's calendar date in the named time zone."""
     return datetime.now(ZoneInfo(tz_name)).date()
+
+
+def display(d: date, today: date) -> str:
+    """A date as the screens show it: `18 Apr`, with the year only if it is not this year."""
+    text = f"{d.day} {d:%b}"
+    return text if d.year == today.year else f"{text} {d.year}"
 
 
 def parse_iso(text: str) -> date | None:

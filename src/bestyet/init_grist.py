@@ -31,7 +31,7 @@ from dataclasses import replace
 
 import httpx
 
-from bestyet.check import check_document, format_differences, page_names
+from bestyet.check import FIX_HINT, check_document, format_differences, page_names
 from bestyet.config import Config, ConfigError
 from bestyet.grist import GristClient, GristError
 from bestyet.init_errors import ErrorReport, InitError, Interrupted, _explaining, explain
@@ -203,11 +203,7 @@ def run(
             differences = check_document(client)
         if differences:
             print(format_differences(differences), file=out)
-            print(
-                "Running bestyet-init without --check adds what is missing; other differences "
-                "(a changed type or name, say) need fixing in Grist.",
-                file=out,
-            )
+            print(FIX_HINT, file=out)
             n = len(differences)
             raise InitError(
                 f"the document has {n} difference{'' if n == 1 else 's'} from the contract"

@@ -11,12 +11,15 @@ from init_helpers import full_fake
 
 from bestyet import create_app, dates, marks, schema
 from bestyet.config import Config
+from bestyet.init_steps import column_payload
 
 CONFIG = Config.from_env({"GRIST_URL": BASE, "GRIST_DOC_ID": DOC, "GRIST_API_KEY": KEY})
 
 
 def seed_demo(fake):
     """Add the demo athletes, meets, results and personal bests to a `full_fake` document."""
+    category = next(c for c in schema.table("Events").columns if c.id == "Category")
+    fake.tables["Events"]["Category"] = column_payload(category)["fields"]
     ids = {}  # (table, name) -> row id
     for table, rows in (
         ("Athletes", [{"Name": n, "Grade": g, "Division": d} for n, g, d in schema.DEMO_ATHLETES]),

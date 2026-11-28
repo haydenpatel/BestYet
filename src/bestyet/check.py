@@ -21,6 +21,13 @@ class ContractError(Exception):
         super().__init__(format_differences(self.differences))
 
 
+# Printed under the differences, by `bestyet-init --check` and when the app refuses to start.
+FIX_HINT = (
+    "Running bestyet-init without --check adds what is missing; other differences "
+    "(a changed type or name, say) need fixing in Grist."
+)
+
+
 def format_differences(differences: list[str]) -> str:
     noun = "difference" if len(differences) == 1 else "differences"
     lines = [f"The Grist document does not match the BestYet contract ({len(differences)} {noun}):"]
