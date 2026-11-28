@@ -1,12 +1,13 @@
 """One athlete's personal bests, grouped by event category, in the order the screen shows them.
 
 The rows are the PB summary table's, as Grist holds them: nothing is calculated here. A row is
-new when Grist marks a result with its athlete, event and exact implement text `IsNewPB`. A row with no
-event or no best is left out.
+new when Grist marks a result with its athlete, event and exact implement text `IsNewPB`. A row
+with no event or no best is left out.
 
 Categories follow the order of the `Events.Category` choices, then any category that is not a
 choice, by name, then Other. Events with a number in their name come first, by that number
 (80m, 100m), then the rest by name. One event's implements are newest best first.
+
 """
 
 import re
