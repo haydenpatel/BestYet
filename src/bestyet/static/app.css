@@ -66,8 +66,8 @@ h1 { margin: 0 0 12px; font-size: 1.5rem; line-height: 1.2; }
 h2 { margin: 24px 0 8px; font-size: 1.25rem; line-height: 1.25; }
 .note { color: var(--muted); }
 
-/* Personal bests: a card per category, two lines per best. The mark never wraps, so a long
-   event name wraps beside it. */
+/* Personal bests: a card per category, two lines per best. A long event name wraps beside the
+   mark, which never does. */
 .category {
   margin: 16px 0 8px;
   color: var(--muted);
@@ -87,9 +87,24 @@ h2 { margin: 24px 0 8px; font-size: 1.25rem; line-height: 1.25; }
 
 .card li { padding: 10px 12px; }
 .card li + li { border-top: 1px solid var(--outline); }
-.pb-line { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
-.pb-event { min-width: 0; font-weight: 600; }
-.pb-result { display: flex; flex: none; align-items: baseline; gap: 8px; white-space: nowrap; }
+.pb-line { display: flex; align-items: flex-start; gap: 12px; }
+
+/* The name takes what the mark and badge leave, but no less than its longest word, up to the
+   `width` here (which only caps that minimum). */
+.pb-event { flex: 1 1 0; width: 45%; overflow-wrap: break-word; font-weight: 600; }
+
+/* When that is too tight for both side by side, the badge goes under the mark: `wrap-reverse`
+   puts the second item, the mark, on top. */
+.pb-result {
+  display: flex;
+  flex: 0 1 auto;
+  flex-wrap: wrap-reverse;
+  align-items: baseline;
+  justify-content: flex-end;
+  gap: 4px 8px;
+  white-space: nowrap;
+}
+
 .pb-mark { font-weight: 700; font-variant-numeric: tabular-nums; }
 .pb-when { color: var(--muted); font-size: 0.9375rem; }
 
