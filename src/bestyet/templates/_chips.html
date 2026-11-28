@@ -5,7 +5,7 @@
   <div class="chips-box">
     <nav class="chips" aria-label="Athletes" data-athlete-chips>
       {% for athlete in athletes %}
-      <a class="chip" href="{{ url_for(endpoint, athlete=athlete.id) }}" data-athlete-id="{{ athlete.id }}"{% if selected and athlete.id == selected.id %} aria-current="true"{% endif %}>{{ athlete.name }}</a>
+      <a class="chip" id="athlete-{{ athlete.id }}" href="{{ url_for(endpoint, athlete=athlete.id) }}" data-athlete-id="{{ athlete.id }}"{% if selected and athlete.id == selected.id %} aria-current="true"{% endif %}>{{ athlete.name }}</a>
       {% endfor %}
     </nav>
   </div>

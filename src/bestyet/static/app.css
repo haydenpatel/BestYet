@@ -156,7 +156,7 @@ h2 { margin: 24px 0 8px; font-size: 1.25rem; line-height: 1.25; }
 
 .tabs a[aria-current="page"] { border-top-color: var(--accent); color: var(--tab-active); }
 
-/* Page changes (loading.js). The tapped chip or tab takes over the "current" look at once. */
+/* Page changes (app.js). The tapped chip or tab takes over the "current" look at once. */
 .chips.choosing .chip[aria-current="true"]:not(.chosen) {
   border-color: var(--line);
   background: var(--surface);
@@ -167,15 +167,8 @@ h2 { margin: 24px 0 8px; font-size: 1.25rem; line-height: 1.25; }
 .tabs.choosing a:not(.chosen) { border-top-color: transparent; color: var(--muted); }
 .tabs a.chosen { border-top-color: var(--accent); color: var(--tab-active); }
 
-/* A slow one: everything else dims and ignores taps. The delays are CSS animations, set up as the
-   page is left, so that they run even if scripts can no longer change what is painted. */
-.leaving a:not(.chosen), .leaving .pick:not(.chosen) {
-  animation: dim 150ms linear 300ms forwards;
-}
-
-.loading a:not(.chosen), .loading .pick:not(.chosen) { pointer-events: none; }
-
-@keyframes dim { to { opacity: 0.4; } }
+/* A slow one: everything else dims and ignores taps. */
+.loading a:not(.chosen), .loading .pick:not(.chosen) { opacity: 0.4; pointer-events: none; }
 
 .progress {
   display: none;
@@ -188,9 +181,7 @@ h2 { margin: 24px 0 8px; font-size: 1.25rem; line-height: 1.25; }
   overflow: hidden;
 }
 
-.leaving .progress { display: block; opacity: 0; animation: appear 1ms linear 300ms forwards; }
-
-@keyframes appear { to { opacity: 1; } }
+.loading .progress { display: block; }
 
 .progress::before {
   content: "";
@@ -209,6 +200,25 @@ h2 { margin: 24px 0 8px; font-size: 1.25rem; line-height: 1.25; }
 @media (prefers-reduced-motion: reduce) {
   .progress::before { width: 100%; animation: none; }
 }
+
+/* A load that failed, until the next one is asked for. Above the tabs, clear of the chips. */
+.failed {
+  position: fixed;
+  bottom: calc(72px + env(safe-area-inset-bottom)); /* the tab bar and a gap */
+  right: var(--gutter-right);
+  left: var(--gutter-left);
+  z-index: 2;
+  max-width: 38rem;
+  margin: 0 auto;
+  padding: 12px 16px;
+  border: 2px solid var(--accent);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--text);
+}
+
+/* The page htmx swaps: no box of its own, so the column above still lays out its parts. */
+#page { display: contents; }
 
 .visually-hidden {
   position: absolute;

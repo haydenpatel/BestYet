@@ -1,6 +1,7 @@
 // Enhancements for the athlete chips. The pages work without this script.
 // It is inlined right after the chips (see _chips.html), so that it runs before they are first
-// painted: nothing visibly swaps, and there is no separate file that could fail to load.
+// painted, on a page load and again each time htmx swaps a page in: nothing visibly changes, and
+// there is no separate file that could fail to load.
 (function () {
   var switcher = document.currentScript.previousElementSibling;
   var chips = switcher.querySelector("[data-athlete-chips]");
@@ -30,9 +31,16 @@
         setTimeout(function () {
           main.style.visibility = "";
         }, 3000);
-        stored.dispatchEvent(new Event("loadingstart", { bubbles: true })); // for loading.js
-        // replace, so that Back does not return to the page with nobody chosen
-        location.replace(stored.href);
+        // Once htmx has the page. Replacing, so Back does not return to nobody being chosen.
+        var go = function () {
+          setTimeout(function () {
+            if (!window.htmx) return location.replace(stored.href);
+            stored.setAttribute("hx-replace-url", "true");
+            stored.click();
+          }, 0);
+        };
+        if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", go);
+        else go();
       }
     } catch (e) {
       // Storage is blocked.
@@ -52,20 +60,18 @@
   links.forEach(function (a) {
     select.add(new Option(a.textContent, a.getAttribute("href")));
   });
-  function showCurrent() {
-    select.value = current ? current.getAttribute("href") : "";
-    if (!current) select.selectedIndex = 0; // the disabled placeholder
-  }
+  // The default option is the page's athlete (app.js goes back to it when a choice was not loaded).
+  var shown = current ? links.indexOf(current) : 0; // else the placeholder
+  select.options[shown].defaultSelected = true;
+  select.selectedIndex = shown;
+  // Choosing is following the athlete's link, whichever way links are being loaded.
   select.addEventListener("change", function () {
-    // loading.js takes over the navigation if it is there.
-    var options = { bubbles: true, cancelable: true, detail: select.value };
-    if (pick.dispatchEvent(new CustomEvent("pickathlete", options))) {
-      location.assign(select.value);
-    }
+    links
+      .find(function (a) {
+        return a.getAttribute("href") === select.value;
+      })
+      .click();
   });
-  showCurrent();
-  // A page change that did not happen (see loading.js).
-  document.addEventListener("loadingreset", showCurrent);
   pick.append(select);
   switcher.append(pick);
 
@@ -81,11 +87,4 @@
   fit();
   // Fires on resize, rotation and text size changes.
   new ResizeObserver(fit).observe(chips);
-
-  // Back and forward can restore the page as it was left, with another athlete in the dropdown.
-  window.addEventListener("pageshow", function (event) {
-    if (!event.persisted) return;
-    showCurrent();
-    remember();
-  });
 })();

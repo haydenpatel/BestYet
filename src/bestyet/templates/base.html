@@ -5,20 +5,44 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="color-scheme" content="light dark">
   <title>{% block title %}BestYet{% endblock %}</title>
+  {# htmx: no eval, this server only, and nothing of a page is kept, so Back and Forward load it
+     again from the server rather than show old results. Error pages are swapped in like any other.
+     The timeout is longer than Grist's 15 s, so that its error page normally arrives first. #}
+  <meta name="htmx-config" content='{
+    "allowEval": false,
+    "selfRequestsOnly": true,
+    "historyCacheSize": 0,
+    "refreshOnHistoryMiss": true,
+    "timeout": 20000,
+    "defaultSettleDelay": 0,
+    "includeIndicatorStyles": false,
+    "scrollIntoViewOnBoost": false,
+    "responseHandling": [
+      {"code": "204", "swap": false},
+      {"code": "[23]..", "swap": true},
+      {"code": "[45]..", "swap": true, "error": true}
+    ]
+  }'>
   <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
-  <script src="{{ url_for('static', filename='loading.js') }}"></script>
+  <script src="{{ url_for('static', filename='htmx.min.js') }}" defer></script>
+  <script src="{{ url_for('static', filename='app.js') }}" defer></script>
 </head>
-<body>
+{# Links replace #page, and a newer tap drops the request still waiting. #}
+<body hx-boost="true" hx-target="#page" hx-select="#page" hx-swap="outerHTML show:window:top"
+      hx-sync="#page:replace">
   <div class="progress" aria-hidden="true"></div>
   <p class="visually-hidden" role="status" data-loading-status></p>
-  <header>
-    <h1>{% block heading %}BestYet{% endblock %}</h1>
-  </header>
-  <main>
-    {% block body %}{% endblock %}
-  </main>
-  <nav class="tabs" aria-label="Main">
-    <a href="{{ url_for('home') }}"{% if request.endpoint == 'home' %} aria-current="page"{% endif %}>Personal Bests</a>
-  </nav>
+  <p class="failed" role="alert" data-load-failed hidden></p>
+  <div id="page">
+    <header>
+      <h1>{% block heading %}BestYet{% endblock %}</h1>
+    </header>
+    <main>
+      {% block body %}{% endblock %}
+    </main>
+    <nav class="tabs" aria-label="Main">
+      <a id="tab-home" href="{{ url_for('home') }}"{% if request.endpoint == 'home' %} aria-current="page"{% endif %}>Personal Bests</a>
+    </nav>
+  </div>
 </body>
 </html>

@@ -72,7 +72,7 @@ A `.env` file is not required (real environment variables work and take preceden
 BestYet has no login: anyone who can reach it can read and change the results in the connected document. **Do not expose it to the internet.** Run it on a private network, behind your own access control. See [SECURITY.md](SECURITY.md).
 
 - The Grist API key stays on the server. It is never sent to the browser or written to logs.
-- BestYet stores nothing itself. Your browser remembers the last athlete you chose (its row id, in `localStorage`). Everything else works with scripting disabled.
+- BestYet stores nothing itself. Your browser remembers the last athlete you chose (its row id, in `localStorage`); htmx keeps the current page's address for the tab (`sessionStorage`), and no page content. Everything else works with scripting disabled.
 
 ## Testing from a phone
 
@@ -87,7 +87,7 @@ Open `http://<computer-ip>:8585` on the phone. There is no login, so only do thi
 ## Tech Stack
 
 - Python and Flask
-- Jinja templates (HTMX planned)
+- Jinja templates, with [htmx](https://htmx.org/) 2.0.11 loading pages (served by the app from `static/`, [licence](src/bestyet/static/htmx.LICENSE))
 - httpx
 - pytest and ruff
 

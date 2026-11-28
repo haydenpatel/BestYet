@@ -1,3 +1,6 @@
+import base64
+import hashlib
+import json
 import re
 
 import httpx
@@ -9,7 +12,9 @@ from bestyet.grist import DEFAULT_TIMEOUT
 
 def chips(response):
     """The athlete chips of a page: (name, href, is current)."""
-    found = re.findall(r'<a class="chip" href="([^"]*)"([^>]*)>([^<]*)</a>', response.text)
+    found = re.findall(
+        r'<a class="chip" id="athlete-\d+" href="([^"]*)"([^>]*)>([^<]*)</a>', response.text
+    )
     return [(name, href, 'aria-current="true"' in attrs) for href, attrs, name in found]
 
 
@@ -62,15 +67,42 @@ def test_links_keep_a_path_prefix(web):
 def test_assets_are_local_and_served_by_the_app(web):
     html = web.get("/").text
     assets = re.findall(r'(?:<link [^>]*href|<script [^>]*src)="([^"]*)"', html)
-    assert assets == ["/static/app.css", "/static/loading.js"]
+    assert assets == ["/static/app.css", "/static/htmx.min.js", "/static/app.js"]
     texts = [html]
     for path in assets:
         with web.get(path) as response:
             assert response.status_code == 200
-            texts.append(response.text)
+            if path != "/static/htmx.min.js":  # as released; its checksum is tested
+                texts.append(response.text)
     for text in texts:
         for external in ("http:", "https:", "@import", "url("):
             assert external not in text
+
+
+def test_htmx_is_the_released_file(web):
+    # htmx 2.0.11's dist/htmx.min.js: the integrity value in the htmx documentation.
+    with web.get("/static/htmx.min.js") as response:
+        digest = base64.b64encode(hashlib.sha384(response.data).digest()).decode()
+    assert digest == "2OatzQy1H+Zd/IIrjr1TcuDGqLXeHhbooAyJY1KdQMKnr4LZ22k31GBLdYKHmVjg"
+    with web.get("/static/htmx.LICENSE") as response:
+        assert response.text.startswith("Zero-Clause BSD")
+
+
+def htmx_config(web):
+    return json.loads(re.search(r"name=\"htmx-config\" content='([^']*)'", web.get("/").text)[1])
+
+
+def test_htmx_is_set_up_safely_and_keeps_no_pages(web):
+    config = htmx_config(web)
+    assert config["allowEval"] is False
+    assert config["selfRequestsOnly"] is True
+    assert (config["historyCacheSize"], config["refreshOnHistoryMiss"]) == (0, True)
+
+
+def test_htmx_waits_longer_than_grist_and_shows_error_pages(web):
+    config = htmx_config(web)
+    assert config["timeout"] > DEFAULT_TIMEOUT * 1000
+    assert {"code": "[45]..", "swap": True, "error": True} in config["responseHandling"]
 
 
 def test_without_scripting_every_athlete_is_a_link(fake, web):
@@ -96,26 +128,16 @@ def test_held_chips_always_come_back(web):
     assert "@keyframes held { from { visibility: hidden; } }" in css
 
 
-def test_every_page_has_the_loading_feedback(web):
-    for path in ("/", "/nope"):
+def test_every_page_can_be_swapped_in_and_has_the_feedback(web):
+    for path in ("/", "/?athlete=1", "/nope"):
         html = web.get(path).text
-        # in the head and not deferred, so that it also covers a page that redirects itself
-        assert '<script src="/static/loading.js"></script>\n</head>' in html
-        assert 'role="status" data-loading-status></p>' in html
-        assert '<div class="progress" aria-hidden="true">' in html
-
-
-def test_the_bar_delay_is_the_same_in_css_and_script(web):
-    with web.get("/static/loading.js") as response:
-        show = re.search(r"SHOW_AFTER = (\d+);", response.text)[1]
-    with web.get("/static/app.css") as response:
-        assert response.text.count(f"linear {show}ms forwards") == 2
-
-
-def test_loading_feedback_gives_up_after_the_grist_timeout(web):
-    with web.get("/static/loading.js") as response:
-        give_up = int(re.search(r"GIVE_UP_AFTER = (\d+);", response.text)[1])
-    assert give_up > DEFAULT_TIMEOUT * 1000
+        assert 'hx-boost="true" hx-target="#page" hx-select="#page"' in html
+        assert html.count('id="page"') == 1
+        # these stay while pages are swapped
+        before = html[: html.index('id="page"')]
+        assert 'role="status" data-loading-status></p>' in before
+        assert 'role="alert" data-load-failed hidden></p>' in before
+        assert '<div class="progress" aria-hidden="true"></div>' in before
 
 
 def test_error_pages_share_the_layout_and_lead_home():
