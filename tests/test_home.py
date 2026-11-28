@@ -144,7 +144,7 @@ def test_every_page_can_be_swapped_in_and_has_the_feedback(web):
         before = html[: html.index('id="page"')]
         assert 'role="status" data-loading-status></p>' in before
         assert 'role="alert" data-load-failed hidden>' in before
-        # a full page load, not one by htmx: it can follow a sign-in redirect to another site
+        # Reload retries with a full page load, not one by htmx
         assert '<a class="button" href="/" hx-boost="false">Reload</a>' in before
         assert '<div class="progress" aria-hidden="true"></div>' in before
 

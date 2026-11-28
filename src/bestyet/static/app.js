@@ -11,9 +11,8 @@
     document.querySelector("[data-loading-status]").textContent = text;
   }
 
-  // A message over the foot of the page, taken away again by an empty text. Its link loads `path`
-  // as a whole page: the way on without browser UI, for instance to a proxy's sign-in page on
-  // another site, which htmx cannot follow. Only a tap does it, so it cannot loop.
+  // A message over the foot of the page, taken away again by an empty text. Its Reload link retries
+  // by loading `path` as a whole page, for use without browser UI.
   function warn(text, path) {
     var notice = document.querySelector("[data-load-failed]");
     notice.querySelector("p").textContent = text;
@@ -109,8 +108,8 @@
   document.addEventListener("htmx:sendError", failed);
   document.addEventListener("htmx:timeout", failed);
 
-  // Error pages are swapped in like any other. Something that is not one of the app's pages (say
-  // from a proxy) has nothing to swap in, so the browser loads it.
+  // Error pages are swapped in like any other. A response that is not one of the app's pages has
+  // nothing to swap in, so the browser loads it.
   document.addEventListener("htmx:beforeSwap", function (event) {
     if (event.detail.serverResponse.indexOf('id="page"') === -1) {
       event.detail.shouldSwap = false;
