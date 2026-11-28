@@ -135,6 +135,18 @@ def test_held_chips_always_come_back(web):
     assert "@keyframes held { from { visibility: hidden; } }" in css
 
 
+def test_a_tapped_reload_is_dimmed_but_not_disabled(web):
+    with web.get("/static/app.css") as response:
+        css = response.text
+    assert re.findall(r"\.reloading \{([^}]*)\}", css) == [" opacity: 0.4; "]
+    with web.get("/static/app.js") as response:
+        script = response.text
+    assert 'on ? "Reloading…" : "Reload"' in script
+    # restored whenever the message is cleared or shown, which includes a restored page
+    assert "showReloading(link, false);" in script
+    assert 'done();\n    warn("");\n    resetDropdown();' in script
+
+
 def test_every_page_can_be_swapped_in_and_has_the_feedback(web):
     for path in ("/", "/?athlete=1", "/nope"):
         html = web.get(path).text

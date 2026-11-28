@@ -218,6 +218,7 @@ h2 { margin: 24px 0 8px; font-size: 1.25rem; line-height: 1.25; }
 }
 
 .failed p { margin: 0 0 8px; }
+.failed .reloading { opacity: 0.4; } /* tapped: dimmed, but still takes taps */
 
 /* The page htmx swaps: no box of its own, so the column above still lays out its parts. */
 #page { display: contents; }

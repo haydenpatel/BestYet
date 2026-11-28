@@ -11,12 +11,19 @@
     document.querySelector("[data-loading-status]").textContent = text;
   }
 
+  function showReloading(link, on) {
+    link.textContent = on ? "Reloading…" : "Reload";
+    link.classList.toggle("reloading", on);
+  }
+
   // A message over the foot of the page, taken away again by an empty text. Its Reload link retries
   // by loading `path` as a whole page, for use without browser UI.
   function warn(text, path) {
     var notice = document.querySelector("[data-load-failed]");
     notice.querySelector("p").textContent = text;
-    if (path) notice.querySelector("a").href = path;
+    var link = notice.querySelector("a");
+    if (path) link.href = path;
+    showReloading(link, false);
     notice.hidden = !text;
   }
 
@@ -70,6 +77,13 @@
     },
     true
   );
+
+  // Set at once on the tap, to be painted before a full page load stops iPhone Safari painting.
+  // The link keeps working, in case that load fails or hangs.
+  document.querySelector("[data-load-failed] a").addEventListener("click", function (event) {
+    if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return; // loads elsewhere
+    showReloading(event.currentTarget, true);
+  });
 
   // On an athlete's page the home tab means that page: going by way of "/" and its redirect to the
   // remembered athlete would leave the same page in the history twice.
