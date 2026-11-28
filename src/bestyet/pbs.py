@@ -7,7 +7,6 @@ with no event or no best is left out.
 Categories follow the order of the `Events.Category` choices, then any category that is not a
 choice, by name, then Other. Events with a number in their name come first, by that number
 (80m, 100m), then the rest by name. One event's implements are newest best first.
-
 """
 
 import re
