@@ -164,6 +164,11 @@ def test_result_is_frozen():
         (4.52, "Distance", "4.52 m"),
         (62.0, "Distance", "62.00 m"),
         (7.8, None, "7.80"),
+        (-4.5, "Distance", "-4.50 m"),
+        (-5.0, "Time", "-5.00 s"),
+        (-135.3, "Time", "-2:15.30"),
+        (-7.8, None, "-7.80"),
+        (-0.0, "Distance", "0.00 m"),
     ],
 )
 def test_format_value(value, kind, text):

@@ -59,6 +59,7 @@ class Result:
     date: date | None
     is_pb: bool
     is_new_pb: bool
+    implement_key: str  # the cell exactly as Grist holds it, to match summary rows
 
 
 @dataclass(frozen=True)
@@ -73,6 +74,7 @@ class PersonalBest:
     best_date: date | None
     best_meet_id: int | None
     best_meet: str | None
+    implement_key: str  # the cell exactly as Grist holds it: it groups on the untrimmed text
 
 
 def _text(value: object) -> str | None:
@@ -162,6 +164,7 @@ class Data:
                     date=dates.from_grist(f.get("Date")),
                     is_pb=f.get("IsPB") is True,
                     is_new_pb=f.get("IsNewPB") is True,
+                    implement_key=repr(f.get("Implement")),
                 )
             )
         return out
@@ -186,6 +189,7 @@ class Data:
                     best_date=dates.from_grist(f.get("BestDate")),
                     best_meet_id=meet,
                     best_meet=meet and self._lookups.meet_name(meet),
+                    implement_key=repr(f.get("Implement")),
                 )
             )
         return out

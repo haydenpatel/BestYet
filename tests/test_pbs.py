@@ -33,7 +33,9 @@ def summary_rows(fake):
 
 
 def best(event_id, name, implement=None, when=None, value=1.0):
-    return PersonalBest(1, "Athlete A", event_id, name, implement, 1, value, when, None, None)
+    return PersonalBest(
+        1, "Athlete A", event_id, name, implement, 1, value, when, None, None, repr(implement)
+    )
 
 
 def arranged(rows, categories, choices=()):
@@ -69,6 +71,24 @@ def test_new_is_per_implement(fake, grouped):
         ("Discus", "500g", 23.10, True),
         ("Discus", "750g", 19.0, False),
     ]
+
+
+def test_implements_differing_only_by_spaces_are_not_both_new(fake, grouped):
+    discus = next(r["fields"] for r in summary_rows(fake) if r["fields"]["Implement"] == "500g")
+    summary_rows(fake).append({"id": 99, "fields": {**discus, "Implement": "500g ", "Best": 19.0}})
+    assert sorted(grouped(2)["Throws"], key=lambda row: row[2]) == [
+        ("Discus", "500g", 19.0, False),
+        ("Discus", "500g", 23.10, True),
+    ]
+
+
+@pytest.mark.parametrize("options", ["not json", "[1]", '{"choices": 5}', "", None])
+def test_unreadable_category_choices_leave_the_categories_by_name(fake, app, web, options):
+    fake.tables["Events"]["Category"]["widgetOptions"] = options
+    with app.app_context():
+        assert current_data().categories() == []
+    html = web.get("/?athlete=1").text
+    assert html.index(">Middle distance</h3>") < html.index(">Sprints</h3>")
 
 
 def test_an_athlete_with_no_results_has_no_groups(grouped):

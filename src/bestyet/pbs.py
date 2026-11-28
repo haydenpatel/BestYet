@@ -1,7 +1,7 @@
 """One athlete's personal bests, grouped by event category, in the order the screen shows them.
 
 The rows are the PB summary table's, as Grist holds them: nothing is calculated here. A row is
-new when Grist marks a result with its athlete, event and implement `IsNewPB`. A row with no
+new when Grist marks a result with its athlete, event and exact implement text `IsNewPB`. A row with no
 event or no best is left out.
 
 Categories follow the order of the `Events.Category` choices, then any category that is not a
@@ -50,14 +50,16 @@ def by_category(
     """The athlete's rows under each category name, both in display order. `choices` is the
     `Events.Category` choices in Grist's order."""
     by_id = {e.id: e for e in events}
-    new = {(r.event_id, r.implement) for r in results if r.athlete_id == athlete_id and r.is_new_pb}
+    new = {
+        (r.event_id, r.implement_key) for r in results if r.athlete_id == athlete_id and r.is_new_pb
+    }
     groups: dict[str, list[PbRow]] = {}
     for pb in bests:
         if pb.athlete_id != athlete_id or pb.event is None or pb.best is None:
             continue
         event = by_id.get(pb.event_id)
         category = (event and event.category) or OTHER
-        row = PbRow(pb, event and event.kind, (pb.event_id, pb.implement) in new)
+        row = PbRow(pb, event and event.kind, (pb.event_id, pb.implement_key) in new)
         groups.setdefault(category, []).append(row)
     order = {name: i for i, name in enumerate(choices)}
 
