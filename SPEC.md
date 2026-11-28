@@ -32,13 +32,13 @@ Let a parent or coach, from a phone:
 | `GRIST_DOC_ID` | Id of the Grist document | No |
 | `GRIST_API_KEY` | API key for the Grist user the app acts as | Yes |
 | `PORT` | Port the app listens on | No |
-| `TZ` | Time zone used to work out today's date (default for a new meet) | No |
+| `TZ` | Time zone used to work out today's date (default for a new meet, and which year a date can omit) | No |
 
 `GRIST_URL` must be overridable per environment (for example a public URL in development and an internal service URL in production). Nothing may be hardcoded. Ship a `.env.example` with placeholders only, and gitignore `.env`.
 
 ## Grist data model (the contract)
 
-Table and column ids are case sensitive. At startup, read the schema from `GET /api/docs/{doc}/tables` and `.../columns`, and fail loudly with a clear message if anything below is missing.
+Table and column ids are case sensitive. At startup, read the schema from `GET /api/docs/{doc}/tables` and `.../columns`, and fail loudly with a clear message if anything below is missing. The app's message ends with the same `bestyet-init` hint as `--check`.
 
 ### Athletes
 - `Name` (Text)
@@ -171,9 +171,14 @@ return min(dated, key=lambda r: r.Date).Meet if dated else tied[0].Meet
 ## Screens (mobile first, thumb friendly)
 
 1. **Home / PBs**
-   - Athlete switcher at the top: chips, replaced by a dropdown when they would need a third row (without scripting the chips just wrap).
+   - Athlete switcher at the top: chips, replaced by a dropdown when they would need a third row (without scripting the chips just wrap). After a dropdown choice by touch it drops focus; keyboard and other input keep it.
    - PBs grouped by `Events.Category` (a blank category shows as "Other"), each showing event, best mark, implement if any, and the date and meet of the PB result (`BestDate`, `BestMeet`).
    - A small "new PB" badge for results where `IsNewPB` is true.
+   - A card per category (heading in capitals), two lines per best: event (and implement) with the mark on the right, then date and meet. The badge sits just left of the mark, or under it when space is tight.
+   - Marks: at least two decimals, extra ones kept; `s` under 60 seconds, `m:ss.ss` from 60, `m` for distances, no unit for a blank `Kind`.
+   - Dates: `18 Apr`, with the year only when it is not the current year (in `TZ`).
+   - Order: categories as the `Category` choices, then any that is not a choice, then "Other". Events with a number in their name first, by number, then by name. One event's implements newest best first, then by implement text.
+   - A row with no event or best is hidden, and a missing date or meet is left out. With nothing to show: "No personal bests yet." Rows are not tappable and nothing collapses.
 2. **Meets**
    - Newest first, showing name, date, location and result count (`ResultCount`).
    - "New meet": name, date (native date input), location. Prefill location with the last one used.

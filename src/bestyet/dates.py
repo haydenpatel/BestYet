@@ -2,7 +2,7 @@
 
 A Grist Date is Unix seconds at UTC midnight. No time zone is applied in either
 direction, so the date entered is the date stored and shown. The configured time
-zone is only used by `today`, to pick the default date for a new meet.
+zone is only used by `today`, to work out today's date.
 """
 
 import math
