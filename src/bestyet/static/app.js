@@ -11,10 +11,13 @@
     document.querySelector("[data-loading-status]").textContent = text;
   }
 
-  // A message over the foot of the page, taken away again by an empty text.
-  function warn(text) {
+  // A message over the foot of the page, taken away again by an empty text. Its link loads `path`
+  // as a whole page: the way on without browser UI, for instance to a proxy's sign-in page on
+  // another site, which htmx cannot follow. Only a tap does it, so it cannot loop.
+  function warn(text, path) {
     var notice = document.querySelector("[data-load-failed]");
-    notice.textContent = text;
+    notice.querySelector("p").textContent = text;
+    if (path) notice.querySelector("a").href = path;
     notice.hidden = !text;
   }
 
@@ -37,11 +40,14 @@
     });
   }
 
-  function failed() {
+  function failed(event) {
     resetDropdown();
     // _switcher.js hides it on the way to the remembered athlete
     document.querySelector("main").style.visibility = "";
-    warn("Could not load the page. Check the connection and try again.");
+    warn(
+      "Could not load the page. Check the connection and try again.",
+      event.detail.pathInfo.finalRequestPath
+    );
   }
 
   // What shows a choice: the link, or the dropdown standing in for the chips.
@@ -65,6 +71,18 @@
     },
     true
   );
+
+  // On an athlete's page the home tab means that page: going by way of "/" and its redirect to the
+  // remembered athlete would leave the same page in the history twice.
+  document.addEventListener("htmx:configRequest", function (event) {
+    if (
+      event.detail.elt.id === "tab-home" &&
+      event.detail.path === location.pathname &&
+      document.querySelector('#page .chips [aria-current="true"]')
+    ) {
+      event.detail.path = location.pathname + location.search;
+    }
+  });
 
   document.addEventListener("htmx:beforeRequest", function (event) {
     done();
@@ -100,9 +118,12 @@
     }
   });
 
-  // Loading the page already shown adds no history entry.
+  // No new history entry for loading the page already shown, nor for the first athlete chosen:
+  // going Back to "nobody chosen" would only go on to the remembered athlete again.
   document.addEventListener("htmx:beforeHistoryUpdate", function (event) {
-    if (event.detail.history.path === location.pathname + location.search) {
+    var path = event.detail.history.path;
+    var first = !location.search && path.indexOf(location.pathname + "?athlete=") === 0;
+    if (first || path === location.pathname + location.search) {
       event.detail.history.type = "replace";
     }
   });

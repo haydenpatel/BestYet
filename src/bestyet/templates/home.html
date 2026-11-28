@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% from "_chips.html" import athlete_chips %}
-{% block title %}Personal Bests - BestYet{% endblock %}
+{# The athlete is in the title, which app.js announces after a swap. #}
+{% block title %}{% if selected %}{{ selected.name }} - {% endif %}Personal Bests - BestYet{% endblock %}
 {% block heading %}Personal Bests{% endblock %}
 {% block body %}
 {% if not athletes %}

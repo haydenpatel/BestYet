@@ -32,7 +32,10 @@
       hx-sync="#page:replace">
   <div class="progress" aria-hidden="true"></div>
   <p class="visually-hidden" role="status" data-loading-status></p>
-  <p class="failed" role="alert" data-load-failed hidden></p>
+  <div class="failed" role="alert" data-load-failed hidden>
+    <p></p>
+    <a class="button" href="{{ url_for('home') }}" hx-boost="false">Reload</a>
+  </div>
   <div id="page">
     <header>
       <h1>{% block heading %}BestYet{% endblock %}</h1>

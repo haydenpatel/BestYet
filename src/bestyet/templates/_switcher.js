@@ -51,6 +51,7 @@
   var pick = document.createElement("div");
   var select = document.createElement("select");
   pick.className = "pick";
+  select.id = "athlete-select"; // htmx gives it back the focus after a swap
   select.setAttribute("aria-label", "Athlete");
   if (!current) {
     var placeholder = new Option("Choose an athlete", "");

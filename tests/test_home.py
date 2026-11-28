@@ -36,6 +36,12 @@ def test_the_chosen_athlete_is_marked(web):
     assert "Choose an athlete." not in response.text
 
 
+def test_the_title_names_the_chosen_athlete(web):
+    # app.js announces the title after a swap, so it differs from athlete to athlete.
+    assert "<title>Athlete B - Personal Bests - BestYet</title>" in web.get("/?athlete=2").text
+    assert "<title>Personal Bests - BestYet</title>" in web.get("/").text
+
+
 def test_an_unknown_athlete_chooses_nobody(web):
     for query in ("99", "abc", ""):
         response = web.get(f"/?athlete={query}")
@@ -56,6 +62,7 @@ def test_names_are_escaped(fake, web):
     response = web.get("/?athlete=1")
     assert "<script>alert" not in response.text
     assert "&lt;script&gt;" in response.text
+    assert "<title>&lt;script&gt;alert(1)&lt;/script&gt; - Personal Bests" in response.text
 
 
 def test_links_keep_a_path_prefix(web):
@@ -136,7 +143,9 @@ def test_every_page_can_be_swapped_in_and_has_the_feedback(web):
         # these stay while pages are swapped
         before = html[: html.index('id="page"')]
         assert 'role="status" data-loading-status></p>' in before
-        assert 'role="alert" data-load-failed hidden></p>' in before
+        assert 'role="alert" data-load-failed hidden>' in before
+        # a full page load, not one by htmx: it can follow a sign-in redirect to another site
+        assert '<a class="button" href="/" hx-boost="false">Reload</a>' in before
         assert '<div class="progress" aria-hidden="true"></div>' in before
 
 
@@ -145,4 +154,4 @@ def test_error_pages_share_the_layout_and_lead_home():
     response = create_app(CONFIG, verify=False, transport=transport).test_client().get("/")
     assert response.status_code == 502
     assert 'href="/static/app.css"' in response.text
-    assert 'class="button" href="/"' in response.text
+    assert 'class="button" href="/">Go to Personal Bests</a>' in response.text
