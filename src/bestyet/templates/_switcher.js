@@ -51,7 +51,7 @@
   var pick = document.createElement("div");
   var select = document.createElement("select");
   pick.className = "pick";
-  select.id = "athlete-select"; // htmx gives it back the focus after a swap
+  select.id = "athlete-select"; // htmx gives it back the focus after a swap, if it still has it
   select.setAttribute("aria-label", "Athlete");
   if (!current) {
     var placeholder = new Option("Choose an athlete", "");
@@ -65,8 +65,19 @@
   var shown = current ? links.indexOf(current) : 0; // else the placeholder
   select.options[shown].defaultSelected = true;
   select.selectedIndex = shown;
+  // After a choice by touch the dropdown gives up the focus: iOS Safari opens its picker again
+  // when htmx focuses the new one. Keyboard and other input keep it.
+  var byTouch = false;
+  select.addEventListener("pointerdown", function (event) {
+    byTouch = event.pointerType === "touch";
+  });
+  select.addEventListener("keydown", function () {
+    byTouch = false;
+  });
   // Choosing is following the athlete's link, whichever way links are being loaded.
   select.addEventListener("change", function () {
+    if (byTouch) select.blur();
+    byTouch = false;
     links
       .find(function (a) {
         return a.getAttribute("href") === select.value;

@@ -126,6 +126,15 @@ def test_the_script_is_inline_right_after_the_chips(web):
     assert "document.currentScript.previousElementSibling" in html
 
 
+def test_only_a_choice_by_touch_gives_up_the_focus(web):
+    # htmx would focus the new dropdown, and iOS Safari would open its picker again.
+    html = web.get("/").text
+    assert 'byTouch = event.pointerType === "touch";' in html
+    assert 'select.addEventListener("keydown", function () {\n    byTouch = false;' in html
+    assert "if (byTouch) select.blur();\n    byTouch = false;\n    links" in html
+    assert html.count(".blur()") == 1
+
+
 def test_held_chips_always_come_back(web):
     # Hidden only where scripting is on, and only for as long as the animation runs.
     with web.get("/static/app.css") as response:
