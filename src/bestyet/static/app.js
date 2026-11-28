@@ -131,6 +131,7 @@
   window.addEventListener("pageshow", function (event) {
     if (!event.persisted) return;
     done();
+    warn("");
     resetDropdown();
   });
 })();
